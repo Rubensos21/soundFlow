@@ -893,6 +893,7 @@ async def _get_spotify_token(db: Session) -> str:
 
 async def _spotify_api_request(endpoint: str, token: str, method: str = "GET", data: dict = None):
     """Hacer una petición a la API de Spotify"""
+    # Escribe la URL oficial: api . spotify . com
     url = f"https://api.spotify.com/v1{endpoint}"
     headers = {"Authorization": f"Bearer {token}"}
     
@@ -982,9 +983,45 @@ async def spotify_get_recently_played(db: Session = Depends(get_db), limit: int 
 
 @app.get("/spotify/playlists/{playlist_id}")
 async def spotify_get_playlist(playlist_id: str, db: Session = Depends(get_db)):
-    """Obtener detalles de una playlist"""
+    """Obtener detalles de una playlist y asegurar que traiga las canciones con la nueva API"""
     token = await _get_spotify_token(db)
-    return await _spotify_api_request(f"/playlists/{playlist_id}", token)
+    
+    try:
+        playlist_data = await _spotify_api_request(f"/playlists/{playlist_id}", token)
+        
+        # Validamos si Spotify ya incluyó las canciones en el primer intento
+        has_songs = False
+        if "items" in playlist_data and "items" in playlist_data["items"]:
+            if len(playlist_data["items"]["items"]) > 0:
+                has_songs = True
+        elif "tracks" in playlist_data and "items" in playlist_data.get("tracks", {}):
+            if len(playlist_data["tracks"]["items"]) > 0:
+                has_songs = True
+
+        if not has_songs:
+            # EL GRAN SECRETO: Spotify eliminó /tracks. Ahora usamos /items
+            tracks_data = await _spotify_api_request(f"/playlists/{playlist_id}/items?limit=100", token)
+            
+            if "tracks" not in playlist_data:
+                playlist_data["tracks"] = {}
+                
+            # Inyectamos los resultados para que Flutter los reciba perfectamente
+            if isinstance(tracks_data, dict) and "items" in tracks_data:
+                playlist_data["tracks"]["items"] = tracks_data["items"]
+            elif isinstance(tracks_data, list):
+                playlist_data["tracks"]["items"] = tracks_data
+            else:
+                playlist_data["tracks"]["items"] = []
+                
+        return playlist_data
+        
+    except Exception as e:
+        logger.error(f"====== ERROR LEYENDO PLAYLIST {playlist_id} ======\nDetalle: {e}")
+        if "playlist_data" in locals() and isinstance(playlist_data, dict):
+            if "tracks" not in playlist_data:
+                playlist_data["tracks"] = {"items": []}
+            return playlist_data
+        return {"id": playlist_id, "name": "Playlist", "tracks": {"items": []}}
 
 
 @app.get("/spotify/search")

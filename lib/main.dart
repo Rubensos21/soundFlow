@@ -103,7 +103,12 @@ class _LoginScreenState extends State<LoginScreen> {
               actions: [
                 TextButton(
                   onPressed: () async {
-                    Navigator.of(context).pop(); // Cerrar diálogo
+                    // 1. Guardamos las referencias ANTES de cerrar el diálogo
+                    final navigator = Navigator.of(context);
+                    final messenger = ScaffoldMessenger.of(context);
+
+                    // 2. Ahora sí, cerramos el diálogo
+                    navigator.pop(); 
                     
                     // Verificar si se vinculó correctamente
                     try {
@@ -121,37 +126,36 @@ class _LoginScreenState extends State<LoginScreen> {
                         return matchesPlatform && isLinked && isVerified;
                       });
                       
-                       if (hasPlatform && mounted) {
-                         // Login exitoso, ir al home
-                        Navigator.of(context).pushAndRemoveUntil(
+                      if (hasPlatform) {
+                        // Login exitoso, ir al home usando la referencia guardada
+                        navigator.pushAndRemoveUntil(
                           MaterialPageRoute(
                             builder: (_) => const HomeScreen(initialIndex: 0),
                           ),
                           (route) => false,
                         );
-                        ScaffoldMessenger.of(context).showSnackBar(
+                        // Mostrar mensaje usando la referencia guardada
+                        messenger.showSnackBar(
                           SnackBar(
                             content: Text('¡${_platformDisplayName(platform)} vinculada exitosamente!'),
                             backgroundColor: Colors.green,
                           ),
                         );
-                       } else if (mounted) {
-                         ScaffoldMessenger.of(context).showSnackBar(
-                           const SnackBar(
-                             content: Text('No se detectó la vinculación. Intenta de nuevo.'),
-                             backgroundColor: Colors.orange,
-                           ),
-                         );
-                       }
-                    } catch (e) {
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Error verificando cuenta: $e'),
-                            backgroundColor: Colors.red,
+                      } else {
+                        messenger.showSnackBar(
+                          const SnackBar(
+                            content: Text('No se detectó la vinculación. Intenta de nuevo.'),
+                            backgroundColor: Colors.orange,
                           ),
                         );
                       }
+                    } catch (e) {
+                      messenger.showSnackBar(
+                        SnackBar(
+                          content: Text('Error verificando cuenta: $e'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
                     }
                   },
                   child: const Text(

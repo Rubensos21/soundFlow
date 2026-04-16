@@ -178,6 +178,8 @@ class _CreateOptionsCard extends StatelessWidget {
             title: 'Playlist generada',
             subtitleUser: 'SoundFlow AI',
             mood: emotion,
+            // Agregamos esto: Si tu backend ya devuelve un ID de playlist al crearla, lo usa. Si no, manda vacío.
+            playlistId: resp['playlist_id']?.toString() ?? '', 
           ),
         ),
       );

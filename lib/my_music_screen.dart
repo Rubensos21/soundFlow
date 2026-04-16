@@ -1,3 +1,4 @@
+import 'playlist_result.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -577,6 +578,8 @@ class _MyMusicScreenState extends State<MyMusicScreen>
   }
 
   Widget _buildPlaylistItem(String platform, Map<String, dynamic> playlist) {
+    // AGREGA ESTA LÍNEA AQUÍ:
+    print('--- DATOS DE PLAYLIST: $playlist');
     final images = playlist['images'] as List?;
     String? imageUrl;
     if (images != null && images.isNotEmpty) {
@@ -584,7 +587,14 @@ class _MyMusicScreenState extends State<MyMusicScreen>
       imageUrl = first['url'] as String?;
     }
 
-    final trackCount = playlist['tracks']?['total'] ?? 0;
+    // --- CONTADOR CORREGIDO BASADO EN TUS LOGS ---
+    int trackCount = 0;
+    try {
+      // Buscamos 'items' (como lo envía tu backend) o 'tracks' por si acaso
+      var t = playlist['items'] ?? playlist['tracks']; 
+      if (t is Map) trackCount = t['total'] ?? 0;
+      else if (t is int) trackCount = t;
+    } catch (_) {}
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -631,9 +641,25 @@ class _MyMusicScreenState extends State<MyMusicScreen>
           ],
         ),
         trailing: const Icon(Icons.chevron_right, color: Colors.white),
-        onTap: () {
-          // TODO: abrir detalles de la playlist por plataforma
-        },
+        // --- CORRECCIÓN DE LA NAVEGACIÓN ---
+          // --- NUEVA NAVEGACIÓN ---
+          onTap: () {
+            final ownerName = playlist['owner'] != null 
+                ? playlist['owner']['display_name'] 
+                : 'Spotify';
+
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (context) => PlaylistResultScreen(
+                  title: playlist['name'] ?? 'Sin nombre',
+                  subtitleUser: 'Creada por $ownerName',
+                  mood: 'Tu música',
+                  playlistId: playlist['id'] ?? '', // Le pasamos el ID real
+                  imageUrl: imageUrl,               // Le pasamos la portada real
+                ),
+              ),
+            );
+          },
       ),
     );
   }

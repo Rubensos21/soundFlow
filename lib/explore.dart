@@ -46,6 +46,7 @@ class ExploreScreen extends StatelessWidget {
                                   title: 'Playlist de la comunidad',
                                   subtitleUser: 'Sound Flow',
                                   mood: 'Explorar',
+                                  playlistId: '', // <--- AGREGADO
                                 ),
                               ),
                             );
@@ -177,7 +178,13 @@ class ExploreScreen extends StatelessWidget {
         onTap: () {
           Navigator.of(context).push(
             MaterialPageRoute(
-              builder: (_) => PlaylistResultScreen(title: s.title, subtitleUser: 'Tú', mood: 'Guardados'),
+              builder: (_) => PlaylistResultScreen(
+                title: s.title, 
+                subtitleUser: 'Tú', 
+                mood: 'Guardados',
+                playlistId: '', // <--- AGREGADO
+                imageUrl: s.cover, // <--- AGREGADO
+              ),
             ),
           );
         },

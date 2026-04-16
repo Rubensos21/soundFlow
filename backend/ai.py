@@ -1,3 +1,4 @@
+from urllib.parse import quote
 from typing import Dict, List
 import httpx
 from loguru import logger
@@ -130,10 +131,19 @@ class HybridRecommender:
             async with httpx.AsyncClient() as client:
                 for query in search_queries[:3]:  # Máximo 3 búsquedas diferentes
                     try:
-                        response = await client.get(
-                            f"https://api.spotify.com/v1/search?q={query}&type=track&limit=20",
-                            headers={"Authorization": f"Bearer {spotify_token}"}
-                        )
+                        # 1. Codificamos la query para que la URL sea válida (ej: cambia espacios por %20)
+                        safe_query = quote(query)
+
+                        # 1. Definimos la URL (Escríbela tú: api . spotify . com)
+                        url_busqueda = f"https://api.spotify.com/v1/search?q={safe_query}&type=track&limit=20"
+                        
+                        # 2. Corregimos los headers (El ":" debe ir afuera de la comilla)
+                        headers_auth = {"Authorization": f"Bearer {spotify_token}"}
+                        
+                        response = await client.get(url_busqueda, headers=headers_auth)
+                        
+                        # DEBUG: Agrega esto para ver qué pasa en tu terminal
+                        print(f"Spotify Search Status: {response.status_code}")
                         
                         if response.status_code == 200:
                             data = response.json()
@@ -160,7 +170,7 @@ class HybridRecommender:
                             break
                     
                     except Exception as e:
-                        logger.error(f"Error buscando en Spotify: {e}")
+                        logger.error(f"Error buscando en Spotify con query '{query}': {e}")
                         continue
             
             return tracks[:limit] if tracks else self._fake_tracks("generated")
