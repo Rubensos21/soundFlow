@@ -129,23 +129,24 @@ class HybridRecommender:
             
             tracks = []
             async with httpx.AsyncClient() as client:
-                for query in search_queries[:3]:  # Máximo 3 búsquedas diferentes
+                for query in search_queries[:3]:
                     try:
-                        # 1. Codificamos la query para que la URL sea válida (ej: cambia espacios por %20)
-                        safe_query = quote(query)
-
-                        # 1. Definimos la URL (Escríbela tú: api . spotify . com)
-                        url_busqueda = f"https://api.spotify.com/v1/search?q={safe_query}&type=track&limit=20"
-                        
-                        # 2. Corregimos los headers (El ":" debe ir afuera de la comilla)
+                        # LA SOLUCIÓN: Usamos 'params' para que httpx codifique todo
+                        search_url = "https://api.spotify.com/v1/search"
+                        search_params = {
+                            "q": query,
+                            "type": "track",
+                            "limit": 20
+                        }
                         headers_auth = {"Authorization": f"Bearer {spotify_token}"}
                         
-                        response = await client.get(url_busqueda, headers=headers_auth)
+                        response = await client.get(search_url, params=search_params, headers=headers_auth)
                         
-                        # DEBUG: Agrega esto para ver qué pasa en tu terminal
-                        print(f"Spotify Search Status: {response.status_code}")
+                        # Esto saldrá en tu terminal de VS Code
+                        print(f"--- Buscando: '{query}' | Status: {response.status_code}")
                         
                         if response.status_code == 200:
+                            # ... (aquí sigue tu código igual para procesar los items)
                             data = response.json()
                             items = data.get('tracks', {}).get('items', [])
                             
@@ -180,43 +181,25 @@ class HybridRecommender:
             return self._fake_tracks("error")
     
     def _build_search_queries(self, genres: List[str], emotion: str, activity: str = None) -> List[str]:
-        """Construye queries inteligentes para buscar en Spotify"""
+        """Construye frases de búsqueda simples y efectivas"""
         queries = []
         
-        # Query basada en género y mood
-        if genres:
-            genre_str = " OR ".join(genres)
-            queries.append(f"genre:{genre_str}")
+        # Combinación de géneros y mood (Ej: "indie acoustic sad")
+        base_query = f"{' '.join(genres)} {emotion}".strip()
+        if base_query:
+            queries.append(base_query)
         
-        # Query basada en actividad
+        # Búsqueda por actividad (Ej: "workout motivation")
         if activity:
             activity_terms = {
-                'study': 'focus study instrumental',
-                'workout': 'workout gym motivation',
+                'study': 'focus study lofi',
+                'workout': 'workout gym energy',
                 'sleep': 'sleep relax ambient',
-                'party': 'party dance upbeat',
+                'party': 'party dance hits',
                 'travel': 'road trip chill'
             }
             if activity in activity_terms:
                 queries.append(activity_terms[activity])
-        
-        # Query basada en emoción
-        emotion_terms = {
-            'happy': 'happy upbeat positive',
-            'sad': 'sad melancholic emotional',
-            'angry': 'aggressive intense powerful',
-            'calm': 'chill relaxing peaceful',
-            'romantic': 'romantic love ballad',
-            'energetic': 'energetic upbeat powerful'
-        }
-        if emotion in emotion_terms:
-            queries.append(emotion_terms[emotion])
-        
-        # Si no hay queries específicas, usar genéricos
-        if not queries and genres:
-            queries.append(genres[0])
-        elif not queries:
-            queries.append('top tracks popular')
         
         return queries
 
