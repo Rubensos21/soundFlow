@@ -1,3 +1,5 @@
+import 'artist_detail_screen.dart';
+import 'top_artists_screen.dart';
 import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'favorites.dart';
@@ -6,6 +8,7 @@ import 'explore.dart';
 import 'user_profile.dart';
 import 'createPlaylist.dart';
 import 'my_music_screen.dart';
+import 'services/api_client.dart'; // IMPORTANTE: Agregamos el cliente
 
 class HomeScreen extends StatefulWidget {
   final int initialIndex;
@@ -17,11 +20,49 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 2; // Por defecto el Home (índice 2)
+  
+  // Nuevas variables para guardar los datos reales
+  String _userName = 'Cargando...';
+  List<dynamic> _topArtists = [];
+  bool _isLoadingData = true;
 
   @override
   void initState() {
     super.initState();
     _selectedIndex = widget.initialIndex;
+    _loadUserData(); // Mandamos a traer los datos al abrir la pantalla
+  }
+
+  // Función mágica que trae tus datos de Spotify
+  Future<void> _loadUserData() async {
+    try {
+      final api = ApiClient();
+      
+      // 1. Obtenemos tu perfil (Nombre)
+      final profile = await api.getSpotifyProfile();
+      final name = profile['display_name'] ?? 'Usuario';
+
+      // 2. Obtenemos tus artistas favoritos
+      final artistsData = await api.getTopArtists(limit: 4);
+      final artistsList = artistsData['items'] ?? [];
+
+      // 3. Actualizamos la pantalla
+      if (mounted) {
+        setState(() {
+          _userName = name;
+          _topArtists = artistsList;
+          _isLoadingData = false;
+        });
+      }
+    } catch (e) {
+      print('Error cargando datos del home: $e');
+      if (mounted) {
+        setState(() {
+          _userName = 'Usuario'; // Si falla, te llama "Usuario"
+          _isLoadingData = false;
+        });
+      }
+    }
   }
 
   void _onItemTapped(int index) {
@@ -44,19 +85,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildBody() {
-    if (_selectedIndex == 0) {
-      return const MyMusicScreen();
-    }
-    if (_selectedIndex == 1) {
-      return const FavoritesScreen();
-    }
-    if (_selectedIndex == 3) {
-      return const ExploreScreen();
-    }
-    if (_selectedIndex == 4) {
-      return const UserProfileScreen();
-    }
-    // Home (índice 2) y resto por defecto
+    if (_selectedIndex == 0) return const MyMusicScreen();
+    if (_selectedIndex == 1) return const FavoritesScreen();
+    if (_selectedIndex == 3) return const ExploreScreen();
+    if (_selectedIndex == 4) return const UserProfileScreen();
+    
+    // Home (índice 2)
     return SafeArea(
       child: SingleChildScrollView(
         child: Padding(
@@ -64,9 +98,9 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Hola Ruben!',
-                style: TextStyle(
+              Text(
+                'Hola ${_userName.split(" ")[0]}!', 
+                style: const TextStyle(
                   fontSize: 28,
                   fontWeight: FontWeight.bold,
                   color: Colors.white,
@@ -82,16 +116,30 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
               const SizedBox(height: 30),
+              
+              // 1. TUS ARTISTAS FAVORITOS
               _buildSection(
                 'Tus artistas favoritos',
                 _buildArtistsList(),
+                onSeeAllTap: () {
+                  Navigator.push(
+                    context, 
+                    MaterialPageRoute(builder: (_) => const TopArtistsScreen())
+                  );
+                }
               ),
+              
               const SizedBox(height: 30),
+              
+              // 2. ¡AQUÍ ESTÁ LA SECCIÓN RESTAURADA DE CREAR PLAYLIST!
               _buildSection(
                 'Genera playlists',
                 _buildCreatePlaylist(),
               ),
+              
               const SizedBox(height: 30),
+              
+              // 3. PLAYLISTS RECOMENDADAS
               _buildSection(
                 'Playlists recomendadas',
                 _buildRecommendedPlaylists(),
@@ -104,7 +152,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildSection(String title, Widget content) {
+  Widget _buildSection(String title, Widget content, {VoidCallback? onSeeAllTap}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -121,7 +169,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             TextButton(
-              onPressed: () {},
+              onPressed: onSeeAllTap ?? () {}, // ¡Aquí conectamos el botón!
               child: const Text(
                 'See all',
                 style: TextStyle(
@@ -139,37 +187,77 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildArtistsList() {
-    final artists = [
-      {'name': 'Twenty One Pilots', 'image': 'assets/images/artist1.png'},
-      {'name': 'Travis Scott', 'image': 'assets/images/artist2.png'},
-      {'name': 'Alvaro Diaz', 'image': 'assets/images/artist3.png'},
-      {'name': 'NSQK', 'image': 'assets/images/artist4.png'},
-    ];
+    // Si sigue cargando, mostramos la bolita
+    if (_isLoadingData) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(20.0),
+          child: CircularProgressIndicator(color: Color(0xFF9C7CFE)),
+        )
+      );
+    }
 
+    // Si no tienes artistas (cuenta nueva de Spotify)
+    if (_topArtists.isEmpty) {
+      return const Text(
+        'Escucha más música en Spotify para ver a tus artistas favoritos aquí.',
+        style: TextStyle(color: Colors.white70, fontFamily: 'Poppins', fontSize: 13),
+      );
+    }
+
+    // Si ya cargaron, los dibujamos
     return SizedBox(
       height: 100,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
-        itemCount: artists.length,
+        itemCount: _topArtists.length,
         itemBuilder: (context, index) {
+          final artist = _topArtists[index];
+          final name = artist['name'] ?? 'Artista';
+          
+          // Extraer la imagen real del artista
+          String? imageUrl;
+          final images = artist['images'] as List?;
+          if (images != null && images.isNotEmpty) {
+            imageUrl = images.first['url'];
+          }
+
           return Padding(
             padding: const EdgeInsets.only(right: 16),
-            child: Column(
-              children: [
-                CircleAvatar(
-                  radius: 35,
-                  backgroundImage: AssetImage(artists[index]['image']!),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  artists[index]['name']!,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontFamily: 'Poppins',
+            child: GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ArtistDetailScreen(artist: artist),
                   ),
-                ),
-              ],
+                );
+              },
+              child: Column(
+                children: [
+                  CircleAvatar(
+                    radius: 35,
+                    backgroundColor: Colors.white.withOpacity(0.1),
+                    backgroundImage: imageUrl != null ? NetworkImage(imageUrl) : null,
+                    child: imageUrl == null ? const Icon(Icons.person, color: Colors.white) : null,
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: 70, // Ancho fijo para que el texto no se desborde
+                    child: Text(
+                      name,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontFamily: 'Poppins',
+                      ),
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis, // Si es muy largo pone "..."
+                    ),
+                  ),
+                ],
+              ),
             ),
           );
         },
@@ -234,7 +322,7 @@ class _HomeScreenState extends State<HomeScreen> {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(15),
               image: const DecorationImage(
-                image: AssetImage('assets/images/playlist1.png'),
+                image: AssetImage('assets/images/playlist1.png'), // Esto puede hacerse dinámico luego
                 fit: BoxFit.cover,
               ),
             ),

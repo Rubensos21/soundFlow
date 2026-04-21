@@ -175,6 +175,37 @@ class ApiClient {
     }
     throw Exception('Error ${res.statusCode}: ${res.body}');
   }
+
+  // Obtener perfil real de Spotify
+  Future<Map<String, dynamic>> getSpotifyProfile() async {
+    final uri = Uri.parse('$_baseUrl/spotify/me');
+    final res = await http.get(uri);
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    }
+    throw Exception('Error obteniendo perfil de Spotify: ${res.statusCode}');
+  }
+
+  // Obtener los artistas favoritos reales
+  Future<Map<String, dynamic>> getTopArtists({int limit = 4}) async {
+    final uri = Uri.parse('$_baseUrl/spotify/me/top/artists?limit=$limit');
+    final res = await http.get(uri);
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    }
+    throw Exception('Error obteniendo top artistas: ${res.statusCode}');
+  }
+
+  // Obtener expediente completo del artista
+  Future<Map<String, dynamic>> getArtistDetails(String artistId) async {
+    final uri = Uri.parse('$_baseUrl/spotify/artists/$artistId');
+    final res = await http.get(uri);
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    }
+    throw Exception('Error obteniendo detalles del artista');
+  }
+
 }
 
 

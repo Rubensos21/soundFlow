@@ -1039,4 +1039,9 @@ async def spotify_search(
         token
     )
 
-
+@app.get("/spotify/artists/{artist_id}")
+async def spotify_get_artist(artist_id: str, db: Session = Depends(get_db)):
+    """Obtener el expediente completo de un artista"""
+    token = await _get_spotify_token(db)
+    # Pedimos los datos completos directamente a la fuente
+    return await _spotify_api_request(f"/artists/{artist_id}", token)
