@@ -857,47 +857,96 @@ def apple_recently_played(db: Session = Depends(get_db)):
 # ============================================================================
 
 async def _get_spotify_token(db: Session) -> str:
-    """Obtener token de acceso de Spotify del usuario demo"""
+    """Obtener token de acceso de Spotify. Refresca automáticamente si expiró."""
     if not settings.spotify_client_id or not settings.spotify_client_secret:
         raise HTTPException(
             status_code=500,
             detail="Spotify OAuth no está configurado correctamente en .env.",
         )
+ 
     user = _get_or_create_demo_user(db)
     account = db.query(UserStreamingAccount).filter_by(
-        user_id=user.id,
-        platform="spotify"
+        user_id=user.id, platform="spotify"
     ).first()
-    
+ 
     if not account:
         raise HTTPException(status_code=401, detail="Spotify no conectado")
-    
-    # Verificar si el token está expirado
-    if account.expires_at and datetime.utcnow() >= account.expires_at:
-        # Aquí deberías refrescar el token
-        # Por ahora, simplemente notificamos que expiró
-        logger.warning("Token de Spotify expirado, requiere re-autenticación")
-        if not settings.spotify_client_id:
-            # Si es un token mock, no importa que esté expirado
-            return account.access_token
-        # Si es real y expiró, intentar refrescar
-        # TODO: Implementar refresh token
-        raise HTTPException(status_code=401, detail="Token de Spotify expirado")
-    
+ 
     token = account.access_token
+ 
+    # Rechazar tokens mock (de desarrollo)
     if token.startswith("spotify_"):
-        raise HTTPException(status_code=401, detail="Token de Spotify inválido. Vuelve a autenticar con la API oficial.")
-    
+        raise HTTPException(
+            status_code=401,
+            detail="Token de Spotify inválido. Vuelve a autenticar con la API oficial.",
+        )
+ 
+    # FIX: Refrescar automáticamente si el token expiró o está por expirar (margen de 5 min)
+    margen = timedelta(minutes=5)
+    if account.expires_at and datetime.utcnow() >= (account.expires_at - margen):
+        logger.warning(f"Token expirado o por vencer (expires_at={account.expires_at}). Refrescando...")
+        token = await _refresh_spotify_token(db, account)
+ 
     return token
 
+async def _refresh_spotify_token(db: Session, account) -> str:
+    """Refresca el access token usando el refresh token guardado en DB."""
+    if not account.refresh_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Token de Spotify expirado y no hay refresh token. Vuelve a autenticar."
+        )
+ 
+    logger.info("Intentando refrescar token de Spotify...")
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://accounts.spotify.com/api/token",
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": account.refresh_token,
+                    "client_id": settings.spotify_client_id,
+                    "client_secret": settings.spotify_client_secret,
+                },
+            )
+ 
+        if response.status_code != 200:
+            logger.error(f"Error al refrescar token: {response.status_code} - {response.text}")
+            raise HTTPException(
+                status_code=401,
+                detail="No se pudo refrescar el token de Spotify. Vuelve a autenticar.",
+            )
+ 
+        token_data = response.json()
+        new_token = token_data["access_token"]
+        expires_in = token_data.get("expires_in", 3600)
+ 
+        # Actualizar en base de datos
+        account.access_token = new_token
+        account.expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+        # Spotify a veces rota el refresh token también
+        if "refresh_token" in token_data:
+            account.refresh_token = token_data["refresh_token"]
+        db.commit()
+ 
+        logger.info("Token de Spotify refrescado exitosamente ✓")
+        return new_token
+ 
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Excepción refrescando token: {e}")
+        raise HTTPException(status_code=401, detail="Error inesperado refrescando el token de Spotify.")
 
-async def _spotify_api_request(endpoint: str, token: str, method: str = "GET", data: dict = None):
-    """Hacer una petición a la API de Spotify"""
-    # Escribe la URL oficial: api . spotify . com
+
+async def _spotify_api_request(
+    endpoint: str, token: str, method: str = "GET", data: dict = None
+):
+    """Hacer una petición autenticada a la API de Spotify con validación de respuesta."""
     url = f"https://api.spotify.com/v1{endpoint}"
     headers = {"Authorization": f"Bearer {token}"}
-    
-    async with httpx.AsyncClient() as client:
+ 
+    async with httpx.AsyncClient(timeout=15.0) as client:
         if method == "GET":
             response = await client.get(url, headers=headers)
         elif method == "POST":
@@ -908,18 +957,83 @@ async def _spotify_api_request(endpoint: str, token: str, method: str = "GET", d
             response = await client.delete(url, headers=headers)
         else:
             raise ValueError(f"Método HTTP no soportado: {method}")
-        
-        if response.status_code == 401:
-            raise HTTPException(status_code=401, detail="Token de Spotify inválido")
-        
-        if response.status_code >= 400:
-            logger.error(f"Error de Spotify API: {response.status_code} - {response.text}")
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=f"Error de Spotify: {response.text}"
+ 
+    # Errores HTTP estándar
+    if response.status_code == 401:
+        raise HTTPException(status_code=401, detail="Token de Spotify inválido o expirado")
+ 
+    if response.status_code >= 400:
+        logger.error(f"Error Spotify API [{response.status_code}] {endpoint}: {response.text}")
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=f"Error de Spotify: {response.text}",
+        )
+ 
+    result = response.json()
+ 
+    # FIX CLAVE: Spotify a veces devuelve 200 OK con un cuerpo de error.
+    # Ej: {"error": {"status": 400, "message": "..."}}
+    # Si esto pasa, lo tratamos como error real.
+    if isinstance(result, dict) and "error" in result:
+        error_info = result["error"]
+        error_status = error_info.get("status", 400) if isinstance(error_info, dict) else 400
+        error_msg = error_info.get("message", str(error_info)) if isinstance(error_info, dict) else str(error_info)
+        logger.error(f"Spotify devolvió error en cuerpo 200 [{endpoint}]: {error_status} - {error_msg}")
+        raise HTTPException(
+            status_code=error_status,
+            detail=f"Error de Spotify (200 con error): {error_msg}",
+        )
+ 
+    return result
+
+async def _get_lastfm_artist_data(artist_name: str) -> dict:
+    """Obtiene géneros y listeners de Last.fm como fallback de Spotify."""
+    if not settings.lastfm_api_key:
+        logger.warning("LASTFM_API_KEY no configurada, saltando enriquecimiento.")
+        return {}
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            res = await client.get(
+                "https://ws.audioscrobbler.com/2.0/",
+                params={
+                    "method": "artist.getinfo",
+                    "artist": artist_name,
+                    "api_key": settings.lastfm_api_key,
+                    "format": "json",
+                },
             )
-        
-        return response.json()
+
+        if res.status_code != 200:
+            logger.warning(f"Last.fm respondió {res.status_code} para '{artist_name}'")
+            return {}
+
+        data = res.json()
+
+        # Si Last.fm no encontró al artista
+        if "error" in data:
+            logger.warning(f"Last.fm error para '{artist_name}': {data.get('message')}")
+            return {}
+
+        artist = data.get("artist", {})
+
+        # Extraer tags como géneros
+        tags_raw = artist.get("tags", {}).get("tag", [])
+        genres = [t["name"] for t in tags_raw if isinstance(t, dict)]
+
+        # Listeners como sustituto de followers
+        listeners = int(artist.get("stats", {}).get("listeners", 0))
+
+        logger.info(f"Last.fm para '{artist_name}': genres={genres}, listeners={listeners}")
+
+        return {
+            "genres": genres,
+            "followers": {"total": listeners},
+        }
+
+    except Exception as e:
+        logger.error(f"Error consultando Last.fm para '{artist_name}': {e}")
+        return {}
 
 
 @app.get("/spotify/me")
@@ -1041,7 +1155,151 @@ async def spotify_search(
 
 @app.get("/spotify/artists/{artist_id}")
 async def spotify_get_artist(artist_id: str, db: Session = Depends(get_db)):
-    """Obtener el expediente completo de un artista"""
+    """Obtener expediente completo de un artista, enriquecido con Last.fm."""
     token = await _get_spotify_token(db)
-    # Pedimos los datos completos directamente a la fuente
-    return await _spotify_api_request(f"/artists/{artist_id}", token)
+    data = await _spotify_api_request(f"/artists/{artist_id}", token)
+
+    # Si Spotify devuelve objeto simplificado (sin géneros/seguidores),
+    # enriquecer con Last.fm
+    if not data.get("genres") and not data.get("followers"):
+        artist_name = data.get("name", "")
+        logger.info(f"Spotify devolvió objeto simplificado para '{artist_name}', consultando Last.fm...")
+        lastfm_data = await _get_lastfm_artist_data(artist_name)
+        if lastfm_data:
+            data = {**data, **lastfm_data}
+
+    logger.info(
+        f"Artist {artist_id} → followers={data.get('followers')}, genres={data.get('genres')}"
+    )
+    return data
+
+@app.get("/spotify/artists/{artist_id}/user-playlists")
+async def spotify_get_artist_user_playlists(artist_id: str, db: Session = Depends(get_db)):
+    token = await _get_spotify_token(db)
+
+    me = await _spotify_api_request("/me", token)
+    my_id = me.get("id")
+
+    playlists_data = await _spotify_api_request("/me/playlists?limit=50", token)
+    playlists = playlists_data.get("items", [])
+    logger.info(f"Total playlists (propias + seguidas): {len(playlists)}")
+
+    matching = []
+
+    for playlist in playlists:
+        playlist_id = playlist.get("id")
+        playlist_name = playlist.get("name", "?")
+        owner_id = playlist.get("owner", {}).get("id")
+        is_own = owner_id == my_id
+
+        if not playlist_id:
+            continue
+
+        try:
+            found = False
+            next_url = f"/playlists/{playlist_id}/items?limit=100"
+
+            while next_url and not found:
+                    tracks_data = await _spotify_api_request(next_url, token)
+                    items = tracks_data.get("items", [])
+
+                    for item in items:
+                        if not item:
+                            continue
+                        track = item.get("track")
+                        if not track or track.get("type") == "episode":
+                            continue
+                        artists = track.get("artists") or []
+                        if any(a.get("id") == artist_id for a in artists):
+                            found = True
+                            break
+
+                    raw_next = tracks_data.get("next")
+                    # ===== CORRECCIÓN A PRUEBA DE BALAS PARA LA PAGINACIÓN =====
+                    if raw_next and not found:
+                        # Cortamos la URL exactamente donde empieza el endpoint
+                        if "/v1" in raw_next:
+                            next_url = raw_next.split("/v1")[-1]
+                        else:
+                            next_url = None
+                    else:
+                        next_url = None
+            if found:
+                logger.info(f"  ✓ '{playlist_name}' ({'propia' if is_own else 'seguida'})")
+                matching.append({
+                    "id": playlist_id,
+                    "name": playlist_name,
+                    "description": playlist.get("description", ""),
+                    "images": playlist.get("images", []),
+                    "tracks_total": playlist.get("tracks", {}).get("total", 0),
+                    "external_urls": playlist.get("external_urls", {}),
+                    "is_own": is_own,  # útil para mostrar un ícono diferente en Flutter
+                })
+            else:
+                logger.info(f"  ✗ '{playlist_name}'")
+
+        except Exception as e:
+            # 403 = playlist privada de otro usuario, simplemente se omite
+            status = str(e)[:3]
+            if "403" in status:
+                logger.info(f"  — '{playlist_name}' privada, sin acceso (403)")
+            elif "502" in status:
+                logger.warning(f"  — '{playlist_name}' error temporal de Spotify (502)")
+            else:
+                logger.warning(f"  — '{playlist_name}' error: {e}")
+            continue
+
+    logger.info(f"Resultado: {len(matching)} playlists con artista {artist_id}")
+    return {"playlists": matching}
+
+@app.get("/spotify/artists/{artist_id}/top-tracks")
+async def spotify_get_artist_top_tracks(artist_id: str, db: Session = Depends(get_db)):
+    token = await _get_spotify_token(db)
+
+    # Nombre del artista
+    artist_data = await _spotify_api_request(f"/artists/{artist_id}", token)
+    artist_name = artist_data.get("name", "")
+
+    # Top tracks de Last.fm
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        res = await client.get(
+            "https://ws.audioscrobbler.com/2.0/",
+            params={
+                "method": "artist.gettoptracks",
+                "artist": artist_name,
+                "api_key": settings.lastfm_api_key,
+                "format": "json",
+                "limit": 5,  # solo 5
+            },
+        )
+    raw_tracks = res.json().get("toptracks", {}).get("track", [])
+
+    # Enriquecer cada track con imagen real de Spotify
+    tracks = []
+    for t in raw_tracks:
+        track_name = t.get("name", "")
+        playcount = int(t.get("playcount", 0))
+        image_url = None
+
+        try:
+            # Buscar el track en Spotify para obtener la portada del álbum
+            query = quote(f"track:{track_name} artist:{artist_name}")
+            search = await _spotify_api_request(
+                f"/search?q={query}&type=track&limit=1", token
+            )
+            items = search.get("tracks", {}).get("items", [])
+            if items:
+                album_images = items[0].get("album", {}).get("images", [])
+                if album_images:
+                    image_url = album_images[0].get("url")
+        except Exception:
+            pass  # Si falla la búsqueda, queda sin imagen
+
+        tracks.append({
+            "name": track_name,
+            "playcount": playcount,
+            "image_url": image_url,
+        })
+
+    logger.info(f"Top 5 tracks de '{artist_name}' con imágenes de Spotify")
+    return {"tracks": tracks}
