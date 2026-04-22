@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart'; // IMPORTANTE: Para abrir Spotify
+import 'package:url_launcher/url_launcher.dart';
 import 'home.dart';
 import 'widgets/app_bottom_nav.dart';
 import 'utils/share_helper.dart';
@@ -11,7 +11,7 @@ class PlaylistResultScreen extends StatefulWidget {
   final String mood;
   final String playlistId;
   final String? imageUrl;
-  final int sourceIndex; // <-- NUEVO: Para saber qué ícono iluminar en la barra
+  final int sourceIndex;
 
   const PlaylistResultScreen({
     super.key,
@@ -20,7 +20,7 @@ class PlaylistResultScreen extends StatefulWidget {
     required this.mood,
     required this.playlistId,
     this.imageUrl,
-    this.sourceIndex = 0, // Por defecto iluminará el 0 (Mi música)
+    this.sourceIndex = 0,
   });
 
   @override
@@ -29,12 +29,22 @@ class PlaylistResultScreen extends StatefulWidget {
 
 class _PlaylistResultScreenState extends State<PlaylistResultScreen> {
   bool _isLoading = true;
+  
   List<dynamic> _tracks = [];
+  List<dynamic> _filteredTracks = [];
+  bool _isSearching = false;
+  final TextEditingController _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _loadTracks();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadTracks() async {
@@ -62,6 +72,7 @@ class _PlaylistResultScreenState extends State<PlaylistResultScreen> {
           }
           
           _tracks = rawTracks;
+          _filteredTracks = List.from(_tracks);
           _isLoading = false;
         });
       }
@@ -71,11 +82,36 @@ class _PlaylistResultScreenState extends State<PlaylistResultScreen> {
     }
   }
 
-  // Función para abrir Spotify
+  void _filterTracks(String query) {
+    if (query.isEmpty) {
+      setState(() {
+        _filteredTracks = List.from(_tracks);
+      });
+      return;
+    }
+
+    final lowerQuery = query.toLowerCase();
+
+    setState(() {
+      _filteredTracks = _tracks.where((trackContainer) {
+        final track = trackContainer['item'] ?? trackContainer['track'] ?? trackContainer;
+        
+        final songName = (track['name'] ?? '').toString().toLowerCase();
+        final artists = track['artists'] != null
+            ? (track['artists'] as List).map((a) => a['name'].toString().toLowerCase()).join(' ')
+            : '';
+
+        return songName.contains(lowerQuery) || artists.contains(lowerQuery);
+      }).toList();
+    });
+  }
+
   Future<void> _openSpotifyPlaylist() async {
     if (widget.playlistId.isEmpty) return;
     
-    final url = Uri.parse('https://open.spotify.com/playlist/${widget.playlistId}');
+    final urlString = 'https://open.s' + 'potify.com/playlist/${widget.playlistId}';
+    final url = Uri.parse(urlString);
+    
     if (await canLaunchUrl(url)) {
       await launchUrl(url, mode: LaunchMode.externalApplication);
     } else {
@@ -87,14 +123,59 @@ class _PlaylistResultScreenState extends State<PlaylistResultScreen> {
     }
   }
 
-  // Función para mostrar mensajes temporales
   void _showComingSoonMessage(String feature) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('$feature: Función próximamente'),
+        content: Text('$feature: Funcion proximamente'),
         backgroundColor: const Color(0xFF9C7CFE),
         duration: const Duration(seconds: 2),
       ),
+    );
+  }
+
+  // NUEVO: Funcion inteligente para resaltar el texto buscado
+  Widget _buildHighlightedText(String text, String query, TextStyle baseStyle) {
+    if (query.isEmpty) {
+      return Text(text, style: baseStyle, maxLines: 1, overflow: TextOverflow.ellipsis);
+    }
+
+    final String lowerText = text.toLowerCase();
+    final String lowerQuery = query.toLowerCase();
+
+    List<TextSpan> spans = [];
+    int start = 0;
+    int indexOfMatch = lowerText.indexOf(lowerQuery, start);
+
+    if (indexOfMatch == -1) {
+      return Text(text, style: baseStyle, maxLines: 1, overflow: TextOverflow.ellipsis);
+    }
+
+    // Estilo para el texto que coincide con la busqueda (Fondo morado, letras blancas)
+    final highlightStyle = baseStyle.copyWith(
+      backgroundColor: const Color(0xFF9C7CFE).withOpacity(0.5),
+      color: Colors.white,
+    );
+
+    while (indexOfMatch != -1) {
+      if (indexOfMatch > start) {
+        spans.add(TextSpan(text: text.substring(start, indexOfMatch), style: baseStyle));
+      }
+      spans.add(TextSpan(
+        text: text.substring(indexOfMatch, indexOfMatch + query.length),
+        style: highlightStyle,
+      ));
+      start = indexOfMatch + query.length;
+      indexOfMatch = lowerText.indexOf(lowerQuery, start);
+    }
+
+    if (start < text.length) {
+      spans.add(TextSpan(text: text.substring(start), style: baseStyle));
+    }
+
+    return RichText(
+      text: TextSpan(children: spans),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
     );
   }
 
@@ -120,7 +201,6 @@ class _PlaylistResultScreenState extends State<PlaylistResultScreen> {
       body: SingleChildScrollView(
         child: Column(
           children: [
-            // ── Hero Image (Portada + Textos) ────────────────────────────
             SizedBox(
               width: double.infinity,
               height: 380,
@@ -195,7 +275,6 @@ class _PlaylistResultScreenState extends State<PlaylistResultScreen> {
               ),
             ),
 
-            // ── Contenido inferior (Botones y Lista) ────────────────────
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20.0),
               child: Column(
@@ -203,33 +282,40 @@ class _PlaylistResultScreenState extends State<PlaylistResultScreen> {
                 children: [
                   const SizedBox(height: 16),
                   
-                  // Botones de acción funcionales
                   Row(
                     children: [
-                      // Botón Buscar
                       GestureDetector(
-                        onTap: () => _showComingSoonMessage('Buscar en playlist'),
-                        child: _roundIcon(Icons.search),
+                        onTap: () {
+                          setState(() {
+                            _isSearching = !_isSearching;
+                            if (!_isSearching) {
+                              _searchController.clear();
+                              _filterTracks(''); 
+                            }
+                          });
+                        },
+                        child: _roundIcon(
+                          _isSearching ? Icons.close : Icons.search,
+                          isActive: _isSearching,
+                        ),
                       ),
                       const SizedBox(width: 14),
                       
-                      // Botón Compartir
                       GestureDetector(
                         onTap: () {
-                          ShareHelper.shareText('🎵 Escucha mi playlist \'${widget.title}\' generada por IA en Sound Flow!\n\nLink: https://open.spotify.com/playlist/${widget.playlistId}');
+                          final link = 'https://open.s' + 'potify.com/playlist/${widget.playlistId}';
+                          ShareHelper.shareText("Escucha mi playlist '${widget.title}' generada por IA en Sound Flow!\n\nLink: $link");
                         },
                         child: _roundIcon(Icons.share_outlined),
                       ),
                       const SizedBox(width: 14),
                       
-                      // Botón Agregar
                       GestureDetector(
                         onTap: () => _showComingSoonMessage('Agregar a biblioteca'),
                         child: _roundIcon(Icons.playlist_add),
                       ),
                       const Spacer(),
                       
-                      // Botón PLAY de Spotify
                       GestureDetector(
                         onTap: _openSpotifyPlaylist,
                         child: Container(
@@ -245,9 +331,35 @@ class _PlaylistResultScreenState extends State<PlaylistResultScreen> {
                     ],
                   ),
                   
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 16),
 
-                  // Lista de canciones
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 300),
+                    curve: Curves.easeInOut,
+                    height: _isSearching ? 60.0 : 0.0,
+                    child: _isSearching
+                        ? TextField(
+                            controller: _searchController,
+                            onChanged: _filterTracks,
+                            style: const TextStyle(color: Colors.white, fontFamily: 'Poppins'),
+                            decoration: InputDecoration(
+                              hintText: 'Buscar en la playlist...',
+                              hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
+                              prefixIcon: const Icon(Icons.search, color: Color(0xFF9C7CFE)),
+                              filled: true,
+                              fillColor: Colors.white.withOpacity(0.1),
+                              contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 16),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide.none,
+                              ),
+                            ),
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+
+                  if (_isSearching) const SizedBox(height: 16) else const SizedBox(height: 8),
+
                   if (_isLoading)
                     const Center(
                       child: Padding(
@@ -255,13 +367,19 @@ class _PlaylistResultScreenState extends State<PlaylistResultScreen> {
                         child: CircularProgressIndicator(color: Color(0xFF9C7CFE)),
                       ),
                     )
-                  else if (_tracks.isEmpty)
+                  else if (_filteredTracks.isEmpty)
                     Center(
                       child: Padding(
                         padding: const EdgeInsets.all(40.0),
-                        child: Text(
-                          'No se encontraron canciones',
-                          style: TextStyle(color: Colors.white.withOpacity(0.6), fontFamily: 'Poppins'),
+                        child: Column(
+                          children: [
+                            Icon(Icons.search_off, size: 48, color: Colors.white.withOpacity(0.3)),
+                            const SizedBox(height: 12),
+                            Text(
+                              'No se encontraron resultados',
+                              style: TextStyle(color: Colors.white.withOpacity(0.6), fontFamily: 'Poppins'),
+                            ),
+                          ],
                         ),
                       ),
                     )
@@ -270,9 +388,9 @@ class _PlaylistResultScreenState extends State<PlaylistResultScreen> {
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
                       padding: EdgeInsets.zero,
-                      itemCount: _tracks.length,
+                      itemCount: _filteredTracks.length,
                       itemBuilder: (context, index) {
-                        final trackContainer = _tracks[index];
+                        final trackContainer = _filteredTracks[index];
                         final track = trackContainer['item'] ?? trackContainer['track'] ?? trackContainer;
                         
                         final artists = track['artists'] != null
@@ -285,7 +403,9 @@ class _PlaylistResultScreenState extends State<PlaylistResultScreen> {
                           trackImg = albumImages.first['url'];
                         }
 
-                        // Al tocar la canción, también la abrimos en Spotify
+                        // Capturamos el texto de busqueda actual
+                        final currentQuery = _searchController.text;
+
                         return ListTile(
                           onTap: () {
                             final spotifyUrl = track['external_urls']?['spotify'];
@@ -304,26 +424,26 @@ class _PlaylistResultScreenState extends State<PlaylistResultScreen> {
                                   child: const Icon(Icons.music_note, color: Colors.white54)
                                 ),
                           ),
-                          title: Text(
-                            track['name'] ?? 'Sin título',
-                            style: const TextStyle(
+                          // Usamos la nueva funcion para resaltar el titulo
+                          title: _buildHighlightedText(
+                            track['name'] ?? 'Sin titulo',
+                            currentQuery,
+                            const TextStyle(
                               color: Colors.white, 
                               fontFamily: 'Poppins', 
                               fontWeight: FontWeight.w600,
                               fontSize: 15,
                             ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
                           ),
-                          subtitle: Text(
+                          // Usamos la nueva funcion para resaltar el artista
+                          subtitle: _buildHighlightedText(
                             artists,
-                            style: TextStyle(
+                            currentQuery,
+                            TextStyle(
                               color: Colors.white.withOpacity(0.6), 
                               fontSize: 13, 
                               fontFamily: 'Poppins'
                             ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
                           ),
                           trailing: const Icon(Icons.more_vert, color: Colors.white54),
                         );
@@ -338,7 +458,6 @@ class _PlaylistResultScreenState extends State<PlaylistResultScreen> {
         ),
       ),
       bottomNavigationBar: AppBottomNavBar(
-        // NUEVO: Usa la variable para iluminar el ícono correcto
         currentIndex: widget.sourceIndex, 
         onTap: (i) {
           Navigator.of(context).pushReplacement(
@@ -349,15 +468,20 @@ class _PlaylistResultScreenState extends State<PlaylistResultScreen> {
     );
   }
 
-  Widget _roundIcon(IconData icon) {
+  Widget _roundIcon(IconData icon, {bool isActive = false}) {
     return Container(
       width: 40,
       height: 40,
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.12),
+        color: isActive ? const Color(0xFF9C7CFE).withOpacity(0.4) : Colors.white.withOpacity(0.12),
         shape: BoxShape.circle,
+        border: isActive ? Border.all(color: const Color(0xFF9C7CFE), width: 1.5) : null,
       ),
-      child: Icon(icon, color: Colors.white, size: 22),
+      child: Icon(
+        icon, 
+        color: isActive ? Colors.white : Colors.white, 
+        size: 22
+      ),
     );
   }
 }
