@@ -2,15 +2,15 @@ import 'artist_detail_screen.dart';
 import 'top_artists_screen.dart';
 import 'package:flutter/material.dart';
 import 'dart:ui';
-import 'package:image_picker/image_picker.dart'; // IMPORTANTE: Para la cámara y galería
+import 'package:image_picker/image_picker.dart';
 import 'favorites.dart';
 import 'widgets/app_bottom_nav.dart';
 import 'explore.dart';
 import 'user_profile.dart';
 import 'createPlaylist.dart';
 import 'my_music_screen.dart';
-import 'services/api_client.dart'; 
-import 'prompt_playlist.dart'; 
+import 'services/api_client.dart';
+import 'prompt_playlist.dart';
 
 class HomeScreen extends StatefulWidget {
   final int initialIndex;
@@ -21,62 +21,50 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  int _selectedIndex = 2; 
-  
-  String _userName = 'Cargando...';
+  int _selectedIndex = 2;
+
+  String _userName = '';
   List<dynamic> _topArtists = [];
   bool _isLoadingData = true;
+
+  static const _kAccent  = Color(0xFF9C7CFE);
+  static const _kBg      = Color(0xFF2D1B69);
+  static const _kSurface = Color(0xFF3D2A85);
 
   @override
   void initState() {
     super.initState();
     _selectedIndex = widget.initialIndex;
-    _loadUserData(); 
+    _loadUserData();
   }
 
   Future<void> _loadUserData() async {
     try {
       final api = ApiClient();
-      
-      final profile = await api.getSpotifyProfile();
-      final name = profile['display_name'] ?? 'Usuario';
-
+      final profile     = await api.getSpotifyProfile();
       final artistsData = await api.getTopArtists(limit: 4);
-      final artistsList = artistsData['items'] ?? [];
-
       if (mounted) {
         setState(() {
-          _userName = name;
-          _topArtists = artistsList;
+          _userName    = profile['display_name'] ?? 'Usuario';
+          _topArtists  = artistsData['items'] ?? [];
           _isLoadingData = false;
         });
       }
     } catch (e) {
       debugPrint('Error cargando datos del home: $e');
-      if (mounted) {
-        setState(() {
-          _userName = 'Usuario'; 
-          _isLoadingData = false;
-        });
-      }
+      if (mounted) setState(() { _userName = 'Usuario'; _isLoadingData = false; });
     }
-  }
-
-  void _onItemTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
-    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF2D1B69),
+      backgroundColor: _kBg,
       body: _buildBody(),
       extendBody: true,
       bottomNavigationBar: AppBottomNavBar(
         currentIndex: _selectedIndex,
-        onTap: _onItemTapped,
+        onTap: (i) => setState(() => _selectedIndex = i),
       ),
     );
   }
@@ -86,164 +74,215 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_selectedIndex == 1) return const FavoritesScreen();
     if (_selectedIndex == 3) return const ExploreScreen();
     if (_selectedIndex == 4) return const UserProfileScreen();
-    
-    // Home (índice 2)
+    return _buildHome();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // HOME
+  // ═══════════════════════════════════════════════════════════════════════════
+  Widget _buildHome() {
+    final firstName = _userName.isNotEmpty ? _userName.split(' ')[0] : '';
+
     return SafeArea(
       child: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(20.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Hola ${_userName.split(" ")[0]}!', 
-                style: const TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                  fontFamily: 'Poppins',
-                ),
-              ),
-              const Text(
-                'Encuentra música nueva',
-                style: TextStyle(
-                  fontSize: 16,
-                  color: Colors.white70,
-                  fontFamily: 'Poppins',
-                ),
-              ),
-              const SizedBox(height: 30),
-              
-              _buildSection(
-                'Tus artistas favoritos',
-                _buildArtistsList(),
-                onSeeAllTap: () {
-                  Navigator.push(
-                    context, 
-                    MaterialPageRoute(builder: (_) => const TopArtistsScreen())
-                  );
-                }
-              ),
-              
-              const SizedBox(height: 30),
-              
-              _buildSection(
-                'Genera playlists',
-                _buildCreatePlaylist(),
-              ),
-              
-              const SizedBox(height: 30),
-              
-              _buildSection(
-                'Playlists recomendadas',
-                _buildRecommendedPlaylists(),
-              ),
-              const SizedBox(height: 20),
-            ],
-          ),
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── Saludo ───────────────────────────────────────────────────
+            _isLoadingData
+                ? Container(
+                    height: 36,
+                    width: 180,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  )
+                : RichText(
+                    text: TextSpan(
+                      style: const TextStyle(fontFamily: 'Poppins'),
+                      children: [
+                        const TextSpan(
+                          text: 'Hola ',
+                          style: TextStyle(fontSize: 28, fontWeight: FontWeight.w400, color: Colors.white70),
+                        ),
+                        TextSpan(
+                          text: '$firstName!',
+                          style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white),
+                        ),
+                      ],
+                    ),
+                  ),
+            const SizedBox(height: 4),
+            const Text(
+              'Encuentra música nueva',
+              style: TextStyle(fontSize: 14, color: Colors.white54, fontFamily: 'Poppins'),
+            ),
+
+            const SizedBox(height: 32),
+
+            // ── Artistas favoritos ───────────────────────────────────────
+            _buildSectionHeader(
+              'Tus artistas favoritos',
+              onSeeAll: () => Navigator.push(
+                context, MaterialPageRoute(builder: (_) => const TopArtistsScreen())),
+            ),
+            const SizedBox(height: 14),
+            _buildArtistsList(),
+
+            const SizedBox(height: 32),
+
+            // ── Genera playlists ─────────────────────────────────────────
+            _buildSectionHeader('Genera playlists'),
+            const SizedBox(height: 14),
+            _buildCreatePlaylistCard(),
+
+            const SizedBox(height: 32),
+
+            // ── Playlists recomendadas (próximamente) ────────────────────
+            _buildSectionHeader('Playlists recomendadas'),
+            const SizedBox(height: 14),
+            _buildRecommendedPlaceholder(),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildSection(String title, Widget content, {VoidCallback? onSeeAllTap}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  // ── SECTION HEADER ─────────────────────────────────────────────────────────
+  Widget _buildSectionHeader(String title, {VoidCallback? onSeeAll}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(
-                fontSize: 20,
+        Text(title,
+            style: const TextStyle(
+                fontSize: 18,
                 fontWeight: FontWeight.bold,
                 color: Colors.white,
-                fontFamily: 'Poppins',
-              ),
-            ),
-            TextButton(
-              onPressed: onSeeAllTap ?? () {}, 
-              child: const Text(
-                'See all',
-                style: TextStyle(
-                  color: Colors.white70,
+                fontFamily: 'Poppins')),
+        if (onSeeAll != null)
+          GestureDetector(
+            onTap: onSeeAll,
+            child: Text(
+              'Ver todo',
+              style: TextStyle(
+                  fontSize: 13,
+                  color: _kAccent.withOpacity(0.85),
                   fontFamily: 'Poppins',
-                ),
-              ),
+                  fontWeight: FontWeight.w500),
             ),
-          ],
-        ),
-        const SizedBox(height: 15),
-        content,
+          ),
       ],
     );
   }
 
+  // ── ARTISTAS ───────────────────────────────────────────────────────────────
   Widget _buildArtistsList() {
     if (_isLoadingData) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(20.0),
-          child: CircularProgressIndicator(color: Color(0xFF9C7CFE)),
-        )
+      return SizedBox(
+        height: 110,
+        child: ListView.builder(
+          scrollDirection: Axis.horizontal,
+          itemCount: 4,
+          itemBuilder: (_, __) => Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: Column(
+              children: [
+                Container(
+                  width: 70, height: 70,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withOpacity(0.08),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Container(
+                  width: 56, height: 10,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       );
     }
 
     if (_topArtists.isEmpty) {
-      return const Text(
-        'Escucha más música en Spotify para ver a tus artistas favoritos aquí.',
-        style: TextStyle(color: Colors.white70, fontFamily: 'Poppins', fontSize: 13),
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withOpacity(0.08)),
+        ),
+        child: Text(
+          'Escucha más música en Spotify para ver tus artistas favoritos aquí.',
+          style: TextStyle(color: Colors.white.withOpacity(0.5),
+              fontFamily: 'Poppins', fontSize: 13),
+          textAlign: TextAlign.center,
+        ),
       );
     }
 
     return SizedBox(
-      height: 100,
+      height: 110,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
         itemCount: _topArtists.length,
         itemBuilder: (context, index) {
           final artist = _topArtists[index];
-          final name = artist['name'] ?? 'Artista';
-          
-          String? imageUrl;
+          final name   = artist['name']?.toString() ?? 'Artista';
           final images = artist['images'] as List?;
-          if (images != null && images.isNotEmpty) {
-            imageUrl = images.first['url'];
-          }
+          final imageUrl = images != null && images.isNotEmpty
+              ? images.first['url'] as String?
+              : null;
 
           return Padding(
             padding: const EdgeInsets.only(right: 16),
             child: GestureDetector(
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => ArtistDetailScreen(artist: artist),
-                  ),
-                );
-              },
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => ArtistDetailScreen(artist: artist)),
+              ),
               child: Column(
                 children: [
-                  CircleAvatar(
-                    radius: 35,
-                    backgroundColor: Colors.white.withOpacity(0.1),
-                    backgroundImage: imageUrl != null ? NetworkImage(imageUrl) : null,
-                    child: imageUrl == null ? const Icon(Icons.person, color: Colors.white) : null,
+                  // Avatar con borde degradado
+                  Container(
+                    width: 72, height: 72,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: _kAccent.withOpacity(0.5), width: 2),
+                    ),
+                    child: ClipOval(
+                      child: imageUrl != null
+                          ? Image.network(imageUrl, fit: BoxFit.cover)
+                          : Container(
+                              color: _kAccent.withOpacity(0.2),
+                              child: const Icon(Icons.person,
+                                  color: Colors.white54, size: 32),
+                            ),
+                    ),
                   ),
                   const SizedBox(height: 8),
                   SizedBox(
-                    width: 70, 
+                    width: 72,
                     child: Text(
                       name,
                       style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontFamily: 'Poppins',
-                      ),
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontFamily: 'Poppins',
+                          fontWeight: FontWeight.w500),
                       textAlign: TextAlign.center,
                       maxLines: 1,
-                      overflow: TextOverflow.ellipsis, 
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ],
@@ -255,176 +294,193 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildCreatePlaylist() {
+  // ── CREAR PLAYLIST ─────────────────────────────────────────────────────────
+  Widget _buildCreatePlaylistCard() {
     return GestureDetector(
-      onTap: () {
-        showCreatePlaylistBlur(context);
-      },
+      onTap: () => showCreatePlaylistBlur(context),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [_kAccent.withOpacity(0.35), _kAccent.withOpacity(0.1)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: _kAccent.withOpacity(0.3)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 54, height: 54,
+              decoration: BoxDecoration(
+                color: _kAccent,
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: [
+                  BoxShadow(
+                      color: _kAccent.withOpacity(0.45),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4)),
+                ],
+              ),
+              child: const Icon(Icons.add_rounded, color: Colors.white, size: 30),
+            ),
+            const SizedBox(width: 16),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Crea una nueva playlist',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                          fontFamily: 'Poppins')),
+                  SizedBox(height: 2),
+                  Text('Por detección facial o con un prompt',
+                      style: TextStyle(
+                          color: Colors.white54,
+                          fontSize: 12,
+                          fontFamily: 'Poppins')),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded,
+                color: Colors.white.withOpacity(0.3), size: 22),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── PLAYLISTS RECOMENDADAS — placeholder hasta integrar Spotify ────────────
+  Widget _buildRecommendedPlaceholder() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 20),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
+      ),
       child: Column(
         children: [
-          Container(
-            width: 80,
-            height: 80,
-            decoration: BoxDecoration(
-              color: const Color(0xFF9C7CFE).withOpacity(0.9),
-              borderRadius: BorderRadius.circular(15),
-              boxShadow: [
-                BoxShadow(
-                  color: const Color(0xFF9C7CFE).withOpacity(0.35),
-                  blurRadius: 14,
-                  offset: const Offset(0, 6),
-                ),
-              ],
-            ),
-            child: const Icon(
-              Icons.add,
-              size: 40,
-              color: Colors.white,
+          Icon(Icons.queue_music_rounded,
+              size: 40, color: Colors.white.withOpacity(0.18)),
+          const SizedBox(height: 12),
+          Text(
+            'Próximamente',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.55),
+              fontFamily: 'Poppins',
+              fontWeight: FontWeight.w600,
+              fontSize: 15,
             ),
           ),
-          const SizedBox(height: 8),
-          const Text(
-            'Crea una nueva\nplaylist',
+          const SizedBox(height: 4),
+          Text(
+            'playlists recomendadas\npor Spotify según tu gusto musical.',
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: Colors.white,
-              fontSize: 12,
+              color: Colors.white.withOpacity(0.3),
               fontFamily: 'Poppins',
+              fontSize: 12,
             ),
           ),
         ],
       ),
     );
   }
-
-  Widget _buildRecommendedPlaylists() {
-    return SizedBox(
-      height: 150,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        itemCount: 3,
-        itemBuilder: (context, index) {
-          return Container(
-            width: 150,
-            margin: const EdgeInsets.only(right: 16),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(15),
-              image: const DecorationImage(
-                image: AssetImage('assets/images/playlist1.png'), 
-                fit: BoxFit.cover,
-              ),
-            ),
-            child: const Align(
-              alignment: Alignment.bottomLeft,
-              child: Padding(
-                padding: EdgeInsets.all(12),
-                child: Text(
-                  'Música relajante',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontFamily: 'Poppins',
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
 }
 
-// ── FUNCIÓN PARA MOSTRAR LA CÁMARA/GALERÍA ──
+// ═══════════════════════════════════════════════════════════════════════════
+// FUNCIONES GLOBALES (fuera del State)
+// ═══════════════════════════════════════════════════════════════════════════
+
 void _showImagePickerMenu(BuildContext context) {
   showModalBottomSheet(
     context: context,
     backgroundColor: const Color(0xFF2D1B69),
     shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-    ),
-    builder: (BuildContext context) {
-      return SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 24.0, horizontal: 20.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.3),
-                  borderRadius: BorderRadius.circular(2),
-                ),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+    builder: (context) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(2),
               ),
-              const SizedBox(height: 24),
-              const Text(
-                'Seleccionar foto',
-                style: TextStyle(
-                  color: Colors.white, 
-                  fontSize: 20, 
-                  fontWeight: FontWeight.bold, 
-                  fontFamily: 'Poppins'
-                ),
-              ),
-              const SizedBox(height: 24),
-              ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF9C7CFE).withOpacity(0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.camera_alt, color: Color(0xFF9C7CFE)),
-                ),
-                title: const Text('Tomar foto con la cámara', style: TextStyle(color: Colors.white, fontFamily: 'Poppins', fontWeight: FontWeight.w500)),
-                onTap: () async {
-                  Navigator.pop(context);
-                  final ImagePicker picker = ImagePicker();
-                  final XFile? image = await picker.pickImage(source: ImageSource.camera);
-                  if (image != null) {
-                    // TODO: Navegar a la pantalla de generación con la foto
-                  }
-                },
-              ),
-              const SizedBox(height: 8),
-              ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF9C7CFE).withOpacity(0.2),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.photo_library, color: Color(0xFF9C7CFE)),
-                ),
-                title: const Text('Elegir de la galería', style: TextStyle(color: Colors.white, fontFamily: 'Poppins', fontWeight: FontWeight.w500)),
-                onTap: () async {
-                  Navigator.pop(context);
-                  final ImagePicker picker = ImagePicker();
-                  final XFile? image = await picker.pickImage(source: ImageSource.gallery);
-                  if (image != null) {
-                    // TODO: Navegar a la pantalla de generación con la foto
-                  }
-                },
-              ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 24),
+            const Text('Seleccionar foto',
+                style: TextStyle(color: Colors.white, fontSize: 20,
+                    fontWeight: FontWeight.bold, fontFamily: 'Poppins')),
+            const SizedBox(height: 24),
+            _PickerOption(
+              icon: Icons.camera_alt,
+              label: 'Tomar foto con la cámara',
+              onTap: () async {
+                Navigator.pop(context);
+                final image = await ImagePicker().pickImage(source: ImageSource.camera);
+                if (image != null) { /* TODO */ }
+              },
+            ),
+            const SizedBox(height: 8),
+            _PickerOption(
+              icon: Icons.photo_library,
+              label: 'Elegir de la galería',
+              onTap: () async {
+                Navigator.pop(context);
+                final image = await ImagePicker().pickImage(source: ImageSource.gallery);
+                if (image != null) { /* TODO */ }
+              },
+            ),
+          ],
         ),
-      );
-    },
+      ),
+    ),
   );
 }
 
-// ── FUNCIÓN DEL PANEL BORROSO SIMÉTRICO ──
+class _PickerOption extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _PickerOption({required this.icon, required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: const Color(0xFF9C7CFE).withOpacity(0.15),
+          shape: BoxShape.circle,
+        ),
+        child: Icon(icon, color: const Color(0xFF9C7CFE)),
+      ),
+      title: Text(label,
+          style: const TextStyle(color: Colors.white,
+              fontFamily: 'Poppins', fontWeight: FontWeight.w500)),
+      onTap: onTap,
+    );
+  }
+}
+
 void showCreatePlaylistBlur(BuildContext context) {
   showGeneralDialog(
     context: context,
     barrierDismissible: true,
     barrierLabel: 'Cerrar modal',
-    barrierColor: Colors.transparent, 
+    barrierColor: Colors.transparent,
     transitionDuration: const Duration(milliseconds: 350),
-    
     pageBuilder: (context, animation, secondaryAnimation) {
       return Center(
         child: Material(
@@ -434,58 +490,53 @@ void showCreatePlaylistBlur(BuildContext context) {
             padding: const EdgeInsets.all(28),
             decoration: BoxDecoration(
               color: const Color(0xFF2D1B69),
-              borderRadius: BorderRadius.circular(28), // Bordes más suaves
+              borderRadius: BorderRadius.circular(28),
               border: Border.all(color: Colors.white.withOpacity(0.1)),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.5),
-                  blurRadius: 20,
-                  offset: const Offset(0, 10),
-                )
+                    color: Colors.black.withOpacity(0.5),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10)),
               ],
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Center(
-                  child: Text(
-                    'Crear playlist',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      fontFamily: 'Poppins',
-                    ),
-                  ),
-                ),
+                const Text('Crear playlist',
+                    style: TextStyle(color: Colors.white, fontSize: 22,
+                        fontWeight: FontWeight.bold, fontFamily: 'Poppins')),
                 const SizedBox(height: 28),
-                
                 Row(
                   children: [
+                    // Escaneo facial
                     Expanded(
                       child: AspectRatio(
-                        aspectRatio: 1, // MAGIA: Fuerza a que sea un cuadrado perfecto
+                        aspectRatio: 1,
                         child: GestureDetector(
                           onTap: () {
-                            Navigator.of(context).pop(); // Cerramos el difuminado
-                            _showImagePickerMenu(context); // Abrimos el menú de cámara
+                            Navigator.of(context).pop();
+                            _showImagePickerMenu(context);
                           },
                           child: Container(
                             decoration: BoxDecoration(
-                              color: Colors.transparent, // Fondo transparente
+                              color: Colors.white.withOpacity(0.05),
                               borderRadius: BorderRadius.circular(20),
-                              border: Border.all(color: const Color(0xFF9C7CFE).withOpacity(0.6), width: 1.5),
+                              border: Border.all(
+                                  color: const Color(0xFF9C7CFE).withOpacity(0.5),
+                                  width: 1.5),
                             ),
                             child: const Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.face_retouching_natural, color: Colors.white, size: 42),
+                                Icon(Icons.face_retouching_natural,
+                                    color: Colors.white, size: 40),
                                 SizedBox(height: 12),
-                                Text(
-                                  'Escaneo\nfacial', 
-                                  textAlign: TextAlign.center, 
-                                  style: TextStyle(color: Colors.white, fontFamily: 'Poppins', fontWeight: FontWeight.bold, height: 1.2)
-                                ),
+                                Text('Escaneo\nfacial',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(color: Colors.white,
+                                        fontFamily: 'Poppins',
+                                        fontWeight: FontWeight.bold,
+                                        height: 1.2)),
                               ],
                             ),
                           ),
@@ -493,32 +544,39 @@ void showCreatePlaylistBlur(BuildContext context) {
                       ),
                     ),
                     const SizedBox(width: 16),
+                    // Prompt
                     Expanded(
                       child: AspectRatio(
-                        aspectRatio: 1, // MAGIA: Fuerza a que sea un cuadrado perfecto
+                        aspectRatio: 1,
                         child: GestureDetector(
                           onTap: () {
                             Navigator.of(context).pop();
-                            Navigator.of(context).push(
-                              MaterialPageRoute(builder: (_) => const PromptPlaylistScreen()),
-                            );
+                            Navigator.of(context).push(MaterialPageRoute(
+                                builder: (_) => const PromptPlaylistScreen()));
                           },
                           child: Container(
                             decoration: BoxDecoration(
                               color: const Color(0xFF9C7CFE),
                               borderRadius: BorderRadius.circular(20),
-                              boxShadow: [BoxShadow(color: const Color(0xFF9C7CFE).withOpacity(0.4), blurRadius: 12, offset: const Offset(0, 4))],
+                              boxShadow: [
+                                BoxShadow(
+                                    color: const Color(0xFF9C7CFE).withOpacity(0.4),
+                                    blurRadius: 14,
+                                    offset: const Offset(0, 4)),
+                              ],
                             ),
                             child: const Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.chat_bubble_outline, color: Colors.white, size: 42),
+                                Icon(Icons.chat_bubble_outline,
+                                    color: Colors.white, size: 40),
                                 SizedBox(height: 12),
-                                Text(
-                                  'Prompt', 
-                                  textAlign: TextAlign.center, 
-                                  style: TextStyle(color: Colors.white, fontFamily: 'Poppins', fontWeight: FontWeight.bold, height: 1.2)
-                                ),
+                                Text('Prompt',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(color: Colors.white,
+                                        fontFamily: 'Poppins',
+                                        fontWeight: FontWeight.bold,
+                                        height: 1.2)),
                               ],
                             ),
                           ),
@@ -527,13 +585,12 @@ void showCreatePlaylistBlur(BuildContext context) {
                     ),
                   ],
                 ),
-                
                 const SizedBox(height: 24),
-                Center(
-                  child: TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: Text('Cancelar', style: TextStyle(color: Colors.white.withOpacity(0.6), fontFamily: 'Poppins', fontSize: 16)),
-                  ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text('Cancelar',
+                      style: TextStyle(color: Colors.white.withOpacity(0.5),
+                          fontFamily: 'Poppins', fontSize: 15)),
                 ),
               ],
             ),
@@ -541,7 +598,6 @@ void showCreatePlaylistBlur(BuildContext context) {
         ),
       );
     },
-    
     transitionBuilder: (context, animation, secondaryAnimation, child) {
       return Stack(
         children: [
@@ -549,10 +605,8 @@ void showCreatePlaylistBlur(BuildContext context) {
             child: FadeTransition(
               opacity: animation,
               child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 12.0, sigmaY: 12.0),
-                child: Container(
-                  color: Colors.black.withOpacity(0.4),
-                ),
+                filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                child: Container(color: Colors.black.withOpacity(0.4)),
               ),
             ),
           ),
@@ -560,8 +614,7 @@ void showCreatePlaylistBlur(BuildContext context) {
             opacity: animation,
             child: ScaleTransition(
               scale: Tween<double>(begin: 0.95, end: 1.0).animate(
-                CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
-              ),
+                  CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
               child: child,
             ),
           ),
