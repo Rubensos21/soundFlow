@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'home.dart';
@@ -41,25 +42,6 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
-  final TextEditingController _emailController = TextEditingController();
-  final TextEditingController _passwordController = TextEditingController();
-
-  @override
-  void dispose() {
-    _emailController.dispose();
-    _passwordController.dispose();
-    super.dispose();
-  }
-
-  void _onLogin() {
-    if (_formKey.currentState?.validate() ?? false) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
-      );
-    }
-  }
-
   Future<void> _loginWithPlatform(String platform) async {
     try {
       final api = ApiClient();
@@ -67,8 +49,13 @@ class _LoginScreenState extends State<LoginScreen> {
       
       final uri = Uri.parse(authUrl);
       if (await canLaunchUrl(uri)) {
-        // Mostrar diálogo de espera
+        // Abrir navegador
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        
         if (mounted) {
+          Timer? pollingTimer;
+          bool isDialogShowing = true;
+          
           showDialog(
             context: context,
             barrierDismissible: false,
@@ -86,94 +73,66 @@ class _LoginScreenState extends State<LoginScreen> {
                 children: [
                   const CircularProgressIndicator(color: Color(0xFF9C7CFE)),
                   const SizedBox(height: 16),
-                  Builder(
-                    builder: (context) {
-                      return Text(
-                        'Se abrió tu navegador. Inicia sesión en ${_platformDisplayName(platform)} y autoriza la aplicación.\n\nCuando termines, cierra la ventana del navegador y presiona \"Continuar\".',
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.8),
-                          fontFamily: 'Poppins',
-                        ),
-                        textAlign: TextAlign.center,
-                      );
-                    },
+                  Text(
+                    'Se abrió tu navegador. Inicia sesión en ${_platformDisplayName(platform)} y cuando detecte que se inicio correctamente se quite la pantalla y redireccione a inicio directamente',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.8),
+                      fontFamily: 'Poppins',
+                    ),
+                    textAlign: TextAlign.center,
                   ),
                 ],
               ),
-              actions: [
-                TextButton(
-                  onPressed: () async {
-                    // 1. Guardamos las referencias ANTES de cerrar el diálogo
-                    final navigator = Navigator.of(context);
-                    final messenger = ScaffoldMessenger.of(context);
-
-                    // 2. Ahora sí, cerramos el diálogo
-                    navigator.pop(); 
-                    
-                    // Verificar si se vinculó correctamente
-                    try {
-                      final accounts = await api.getLinkedAccounts();
-                      final linkedAccounts = List<Map<String, dynamic>>.from(
-                        accounts['accounts'] ?? []
-                      );
-                      
-                      final hasPlatform = linkedAccounts.any((acc) {
-                        final matchesPlatform = acc['platform'] == platform;
-                        final isLinked = acc['linked'] == true;
-                        final isVerified = acc.containsKey('verified')
-                            ? acc['verified'] == true
-                            : true;
-                        return matchesPlatform && isLinked && isVerified;
-                      });
-                      
-                      if (hasPlatform) {
-                        // Login exitoso, ir al home usando la referencia guardada
-                        navigator.pushAndRemoveUntil(
-                          MaterialPageRoute(
-                            builder: (_) => const HomeScreen(initialIndex: 0),
-                          ),
-                          (route) => false,
-                        );
-                        // Mostrar mensaje usando la referencia guardada
-                        messenger.showSnackBar(
-                          SnackBar(
-                            content: Text('¡${_platformDisplayName(platform)} vinculada exitosamente!'),
-                            backgroundColor: Colors.green,
-                          ),
-                        );
-                      } else {
-                        messenger.showSnackBar(
-                          const SnackBar(
-                            content: Text('No se detectó la vinculación. Intenta de nuevo.'),
-                            backgroundColor: Colors.orange,
-                          ),
-                        );
-                      }
-                    } catch (e) {
-                      messenger.showSnackBar(
-                        SnackBar(
-                          content: Text('Error verificando cuenta: $e'),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                    }
-                  },
-                  child: const Text(
-                    'Continuar',
-                    style: TextStyle(
-                      color: Color(0xFF9C7CFE),
-                      fontFamily: 'Poppins',
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
             ),
-          );
+          ).then((_) {
+            isDialogShowing = false;
+            pollingTimer?.cancel();
+          });
+
+          pollingTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
+            if (!isDialogShowing) {
+              timer.cancel();
+              return;
+            }
+            try {
+              final accounts = await api.getLinkedAccounts();
+              final linkedAccounts = List<Map<String, dynamic>>.from(
+                accounts['accounts'] ?? []
+              );
+              
+              final hasPlatform = linkedAccounts.any((acc) {
+                final matchesPlatform = acc['platform'] == platform;
+                final isLinked = acc['linked'] == true;
+                final isVerified = acc.containsKey('verified')
+                    ? acc['verified'] == true
+                    : true;
+                return matchesPlatform && isLinked && isVerified;
+              });
+              
+              if (hasPlatform && isDialogShowing) {
+                timer.cancel();
+                isDialogShowing = false;
+                if (mounted) {
+                  Navigator.of(context).pop(); // Cerramos el diálogo
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(
+                      builder: (_) => const HomeScreen(initialIndex: 0),
+                    ),
+                    (route) => false,
+                  );
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('¡${_platformDisplayName(platform)} vinculada exitosamente!'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
+              }
+            } catch (e) {
+              // Ignorar errores de polling
+            }
+          });
         }
-        
-        // Abrir navegador
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -219,8 +178,6 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget _buildStreamingPlatforms() {
     final platforms = [
       {'name': 'Spotify', 'key': 'spotify', 'logo': 'assets/svg/spotify.svg'},
-      {'name': 'Deezer', 'key': 'deezer', 'logo': 'assets/svg/deezer.svg'},
-      {'name': 'Apple Music', 'key': 'apple', 'logo': 'assets/svg/applemusic.svg'},
     ];
 
     return Row(
@@ -262,6 +219,8 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
+        width: double.infinity,
+        height: double.infinity,
         decoration: const BoxDecoration(
           image: DecorationImage(
             image: AssetImage('assets/images/background.png'),
@@ -269,6 +228,8 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ),
         child: Container(
+          width: double.infinity,
+          height: double.infinity,
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
@@ -308,136 +269,21 @@ class _LoginScreenState extends State<LoginScreen> {
                       ],
                     ),
                     const SizedBox(height: 60),
-                    Form(
-                      key: _formKey,
-                      child: Column(
-                        children: [
-                          TextFormField(
-                            controller: _emailController,
-                            keyboardType: TextInputType.emailAddress,
-                            decoration: InputDecoration(
-                              hintText: 'Correo electrónico',
-                              filled: true,
-                              fillColor: Colors.white.withOpacity(0.1),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(30),
-                                borderSide: BorderSide.none,
-                              ),
-                              prefixIcon: const Icon(Icons.email_outlined),
-                            ),
-                            validator: (value) {
-                              if (value == null || value.trim().isEmpty) {
-                                return 'Ingresa tu correo';
-                              }
-                              return null;
-                            },
+                    Column(
+                      children: [
+                        const Text(
+                          'Inicia Sesión con Spotify',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                            fontFamily: 'Poppins',
                           ),
-                          const SizedBox(height: 16),
-                          TextFormField(
-                            controller: _passwordController,
-                            obscureText: true,
-                            decoration: InputDecoration(
-                              hintText: 'Contraseña',
-                              filled: true,
-                              fillColor: Colors.white.withOpacity(0.1),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(30),
-                                borderSide: BorderSide.none,
-                              ),
-                              prefixIcon: const Icon(Icons.lock_outline),
-                            ),
-                            validator: (value) {
-                              if (value == null || value.isEmpty) {
-                                return 'Ingresa tu contraseña';
-                              }
-                              if (value.length < 6) {
-                                return 'Mínimo 6 caracteres';
-                              }
-                              return null;
-                            },
-                          ),
-                          const SizedBox(height: 24),
-                          ElevatedButton(
-                            onPressed: _onLogin,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF9C7CFE),
-                              minimumSize: const Size(double.infinity, 55),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(30),
-                              ),
-                            ),
-                            child: const Text(
-                              'Iniciar sesión',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w600,
-                                fontFamily: 'Poppins',
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 32),
-                          Row(
-                            children: [
-                              Expanded(child: Divider(color: Colors.white.withOpacity(0.3))),
-                              Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 16),
-                                child: Text(
-                                  'O inicia sesión con',
-                                  style: TextStyle(
-                                    color: Colors.white.withOpacity(0.7),
-                                    fontSize: 14,
-                                    fontFamily: 'Poppins',
-                                  ),
-                                ),
-                              ),
-                              Expanded(child: Divider(color: Colors.white.withOpacity(0.3))),
-                            ],
-                          ),
-                          const SizedBox(height: 24),
-                          _buildStreamingPlatforms(),
-                          const SizedBox(height: 16),
-                          Text(
-                            'Recomendado: Spotify',
-                            style: TextStyle(
-                              color: const Color(0xFF1DB954),
-                              fontSize: 12,
-                              fontFamily: 'Poppins',
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 24),
-                          Wrap(
-                            alignment: WrapAlignment.center,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              Text(
-                                'No tienes una cuenta? ',
-                                style: TextStyle(
-                                  color: Colors.white.withOpacity(0.8),
-                                  fontFamily: 'Poppins',
-                                ),
-                              ),
-                              TextButton(
-                                onPressed: () {
-                                  Navigator.of(context).push(
-                                    MaterialPageRoute(builder: (_) => const SignUpScreen()),
-                                  );
-                                },
-                                child: const Text(
-                                  'Regístrate',
-                                  style: TextStyle(
-                                    color: Color(0xFF9C7CFE),
-                                    fontWeight: FontWeight.w600,
-                                    fontFamily: 'Poppins',
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 32),
-                        ],
-                      ),
+                        ),
+                        const SizedBox(height: 24),
+                        _buildStreamingPlatforms(),
+                        const SizedBox(height: 32),
+                      ],
                     ),
                   ],
                 ),

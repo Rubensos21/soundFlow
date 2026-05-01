@@ -52,7 +52,7 @@ class ApiClient {
       print('\n[ApiClient] $label → status: ${res.statusCode}');
       _printFull('BODY', res.body);
     }
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
   }
 
   Future<Map<String, dynamic>> generatePlaylistFromPrompt(String prompt) async {
@@ -63,7 +63,7 @@ class ApiClient {
       body: jsonEncode({'prompt': prompt}),
     );
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      return jsonDecode(res.body) as Map<String, dynamic>;
+      return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
     throw Exception('Error ${res.statusCode}: ${res.body}');
   }
@@ -76,7 +76,7 @@ class ApiClient {
     final streamed = await request.send();
     final res = await http.Response.fromStream(streamed);
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      return jsonDecode(res.body) as Map<String, dynamic>;
+      return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
     throw Exception('Error ${res.statusCode}: ${res.body}');
   }
@@ -87,7 +87,7 @@ class ApiClient {
     final uri = Uri.parse('$_baseUrl/me/linked-accounts');
     final res = await http.get(uri);
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      return jsonDecode(res.body) as Map<String, dynamic>;
+      return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
     throw Exception('Error ${res.statusCode}: ${res.body}');
   }
@@ -110,7 +110,7 @@ class ApiClient {
     );
     final res = await http.get(uri);
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      return jsonDecode(res.body) as Map<String, dynamic>;
+      return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
     throw Exception('Error ${res.statusCode}: ${res.body}');
   }
@@ -119,7 +119,7 @@ class ApiClient {
     final uri = Uri.parse('$_baseUrl/api/playlists/generated');
     final res = await http.get(uri);
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      return jsonDecode(res.body) as Map<String, dynamic>;
+      return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
     throw Exception('Error ${res.statusCode}: ${res.body}');
   }
@@ -128,7 +128,7 @@ class ApiClient {
     final uri = Uri.parse('$_baseUrl/api/playlists/generated/$playlistId');
     final res = await http.get(uri);
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      return jsonDecode(res.body) as Map<String, dynamic>;
+      return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
     throw Exception('Error ${res.statusCode}: ${res.body}');
   }
@@ -137,7 +137,7 @@ class ApiClient {
     final uri = Uri.parse('$_baseUrl/api/playlists/generated/$playlistId');
     final res = await http.delete(uri);
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      return jsonDecode(res.body) as Map<String, dynamic>;
+      return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
     throw Exception('Error ${res.statusCode}: ${res.body}');
   }
@@ -146,7 +146,7 @@ class ApiClient {
     final uri = Uri.parse('$_baseUrl/spotify/me');
     final res = await http.get(uri);
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      return jsonDecode(res.body) as Map<String, dynamic>;
+      return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
     throw Exception('Error obteniendo perfil de Spotify: ${res.statusCode}');
   }
@@ -155,7 +155,7 @@ class ApiClient {
     final uri = Uri.parse('$_baseUrl/spotify/me/top/artists?limit=$limit');
     final res = await http.get(uri);
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      return jsonDecode(res.body) as Map<String, dynamic>;
+      return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
     throw Exception('Error obteniendo top artistas: ${res.statusCode}');
   }
@@ -175,7 +175,7 @@ class ApiClient {
     }
 
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final data = jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
 
       if (data.containsKey('error') && !data.containsKey('id')) {
         final errInfo = data['error'];
@@ -198,7 +198,7 @@ class ApiClient {
     final uri = Uri.parse('$_baseUrl/spotify/artists/$artistId/user-playlists');
     final res = await http.get(uri);
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      return jsonDecode(res.body) as Map<String, dynamic>;
+      return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
     throw Exception('Error ${res.statusCode}: ${res.body}');
   }
@@ -208,7 +208,7 @@ class ApiClient {
     final uri = Uri.parse('$_baseUrl/spotify/artists/$artistId/top-tracks');
     final res = await http.get(uri);
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      return jsonDecode(res.body) as Map<String, dynamic>;
+      return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
     throw Exception('Error obteniendo top tracks del artista: ${res.statusCode}');
   }

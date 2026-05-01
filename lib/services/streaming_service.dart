@@ -88,7 +88,7 @@ abstract class StreamingService {
       }
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        return jsonDecode(response.body) as Map<String, dynamic>;
+        return jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
       } else if (response.statusCode == 401) {
         throw Exception(
           'No autorizado. Por favor, vuelve a conectar tu cuenta de ${platformDisplayName(platform)}.',

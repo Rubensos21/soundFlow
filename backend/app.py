@@ -1,5 +1,5 @@
 from urllib.parse import quote
-from fastapi import FastAPI, Depends, Request, UploadFile, File, HTTPException
+from fastapi import FastAPI, Depends, Request, UploadFile, File, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, HTMLResponse
 from sqlalchemy.orm import Session
@@ -252,10 +252,16 @@ MOCK_STREAMING_DATA: Dict[str, Dict[str, object]] = {
 }
 
 
-def _get_or_create_demo_user(db: Session) -> User:
-    user = db.query(User).filter_by(email="demo@soundflow.app").first()
+def get_current_user(x_device_id: str = Header(None), db: Session = Depends(get_db)) -> User:
+    if not x_device_id:
+        device_id = "demo_device"
+    else:
+        device_id = x_device_id
+        
+    email = f"{device_id}@soundflow.app"
+    user = db.query(User).filter_by(email=email).first()
     if not user:
-        user = User(email="demo@soundflow.app", display_name="Demo User")
+        user = User(email=email, display_name="App User")
         db.add(user)
         db.commit()
         db.refresh(user)
@@ -280,7 +286,7 @@ def check_config():
 
 @app.get("/me/linked-accounts")
 async def linked_accounts(db: Session = Depends(get_db)):
-    user = _get_or_create_demo_user(db)
+    user = get_current_user(None, db)
     accounts = db.query(UserStreamingAccount).filter_by(user_id=user.id).all()
     result = []
 
@@ -314,7 +320,7 @@ async def linked_accounts(db: Session = Depends(get_db)):
 
 
 def _ensure_platform_linked(db: Session, platform: str) -> UserStreamingAccount:
-    user = _get_or_create_demo_user(db)
+    user = get_current_user(None, db)
     account = (
         db.query(UserStreamingAccount)
         .filter_by(user_id=user.id, platform=platform)
@@ -385,7 +391,7 @@ async def _spotify_user_profile(access_token: str, strict: bool = True) -> Optio
 
 
 @app.get("/auth/{platform}")
-def auth_redirect(platform: str):
+def auth_redirect(platform: str, device_id: str = None):
     if platform not in PLATFORMS:
         raise HTTPException(status_code=400, detail="unsupported platform")
     
@@ -408,6 +414,8 @@ def auth_redirect(platform: str):
             f"&scope={scope}"
             f"&show_dialog=true"
         )
+        if device_id:
+            auth_url += f"&state={device_id}"
         
         return RedirectResponse(url=auth_url)
     
@@ -416,7 +424,7 @@ def auth_redirect(platform: str):
 
 
 @app.get("/auth/{platform}/callback")
-async def auth_callback(platform: str, code: str = None, error: str = None, db: Session = Depends(get_db)):
+async def auth_callback(platform: str, code: str = None, state: str = None, error: str = None, db: Session = Depends(get_db)):
     if platform not in PLATFORMS:
         raise HTTPException(status_code=400, detail="unsupported platform")
     
@@ -424,7 +432,7 @@ async def auth_callback(platform: str, code: str = None, error: str = None, db: 
         logger.error(f"Error en OAuth {platform}: {error}")
         return HTMLResponse(content=f"<h1>Error: {error}</h1>")
 
-    user = _get_or_create_demo_user(db)
+    user = get_current_user(None, db)
 
     # OAuth REAL para Spotify
     if platform == "spotify":
@@ -598,7 +606,7 @@ async def auth_callback(platform: str, code: str = None, error: str = None, db: 
 
 @app.post("/api/generate-playlist/facial")
 async def generate_playlist_facial(image: UploadFile = File(...), db: Session = Depends(get_db)):
-    user = _get_or_create_demo_user(db)
+    user = get_current_user(None, db)
     content = await image.read()
     emotion, suggested = emotion_detector.detect_emotion_from_image(content)
     recommender = HybridRecommender(user.id)
@@ -608,7 +616,7 @@ async def generate_playlist_facial(image: UploadFile = File(...), db: Session = 
 
 @app.post("/api/generate-playlist/prompt")
 async def generate_playlist_prompt(payload: dict, db: Session = Depends(get_db)):
-    user = _get_or_create_demo_user(db)
+    user = get_current_user(None, db)
     prompt = (payload or {}).get("prompt", "").strip()
     if not prompt:
         raise HTTPException(status_code=422, detail="prompt is required")
@@ -717,7 +725,7 @@ def _generate_playlist_name(prompt: str, emotion: str, genres: List[str], activi
 @app.get("/api/playlists/generated")
 def get_generated_playlists(db: Session = Depends(get_db)):
     """Obtener todas las playlists generadas por IA del usuario"""
-    user = _get_or_create_demo_user(db)
+    user = get_current_user(None, db)
     playlists = db.query(AIGeneratedPlaylist).filter_by(user_id=user.id).order_by(
         AIGeneratedPlaylist.created_at.desc()
     ).all()
@@ -744,7 +752,7 @@ def get_generated_playlists(db: Session = Depends(get_db)):
 @app.get("/api/playlists/generated/{playlist_id}")
 def get_generated_playlist_detail(playlist_id: int, db: Session = Depends(get_db)):
     """Obtener detalles completos de una playlist generada"""
-    user = _get_or_create_demo_user(db)
+    user = get_current_user(None, db)
     playlist = db.query(AIGeneratedPlaylist).filter_by(
         id=playlist_id,
         user_id=user.id
@@ -771,7 +779,7 @@ def get_generated_playlist_detail(playlist_id: int, db: Session = Depends(get_db
 @app.delete("/api/playlists/generated/{playlist_id}")
 def delete_generated_playlist(playlist_id: int, db: Session = Depends(get_db)):
     """Eliminar una playlist generada"""
-    user = _get_or_create_demo_user(db)
+    user = get_current_user(None, db)
     playlist = db.query(AIGeneratedPlaylist).filter_by(
         id=playlist_id,
         user_id=user.id
@@ -792,30 +800,30 @@ def delete_generated_playlist(playlist_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/deezer/me")
-def deezer_get_profile(db: Session = Depends(get_db)):
+def deezer_get_profile(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Obtener perfil del usuario de Deezer (Mock)"""
-    _ensure_platform_linked(db, "deezer")
+    _ensure_platform_linked(user, db, "deezer")
     return _get_mock_streaming_response("deezer", "profile")
 
 
 @app.get("/deezer/me/playlists")
-def deezer_get_playlists(db: Session = Depends(get_db)):
+def deezer_get_playlists(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Obtener playlists del usuario de Deezer (Mock)"""
-    _ensure_platform_linked(db, "deezer")
+    _ensure_platform_linked(user, db, "deezer")
     return _get_mock_streaming_response("deezer", "playlists")
 
 
 @app.get("/deezer/me/top/tracks")
-def deezer_get_top_tracks(db: Session = Depends(get_db)):
+def deezer_get_top_tracks(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Obtener canciones favoritas del usuario de Deezer (Mock)"""
-    _ensure_platform_linked(db, "deezer")
+    _ensure_platform_linked(user, db, "deezer")
     return _get_mock_streaming_response("deezer", "top_tracks")
 
 
 @app.get("/deezer/me/player/recently-played")
-def deezer_recently_played(db: Session = Depends(get_db)):
+def deezer_recently_played(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Obtener canciones recientemente reproducidas en Deezer (Mock)"""
-    _ensure_platform_linked(db, "deezer")
+    _ensure_platform_linked(user, db, "deezer")
     return _get_mock_streaming_response("deezer", "recently_played")
 
 
@@ -825,30 +833,30 @@ def deezer_recently_played(db: Session = Depends(get_db)):
 
 
 @app.get("/apple/me")
-def apple_get_profile(db: Session = Depends(get_db)):
+def apple_get_profile(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Obtener perfil del usuario de Apple Music (Mock)"""
-    _ensure_platform_linked(db, "apple")
+    _ensure_platform_linked(user, db, "apple")
     return _get_mock_streaming_response("apple", "profile")
 
 
 @app.get("/apple/me/playlists")
-def apple_get_playlists(db: Session = Depends(get_db)):
+def apple_get_playlists(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Obtener playlists del usuario de Apple Music (Mock)"""
-    _ensure_platform_linked(db, "apple")
+    _ensure_platform_linked(user, db, "apple")
     return _get_mock_streaming_response("apple", "playlists")
 
 
 @app.get("/apple/me/top/tracks")
-def apple_get_top_tracks(db: Session = Depends(get_db)):
+def apple_get_top_tracks(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Obtener canciones favoritas del usuario de Apple Music (Mock)"""
-    _ensure_platform_linked(db, "apple")
+    _ensure_platform_linked(user, db, "apple")
     return _get_mock_streaming_response("apple", "top_tracks")
 
 
 @app.get("/apple/me/player/recently-played")
-def apple_recently_played(db: Session = Depends(get_db)):
+def apple_recently_played(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Obtener canciones recientemente reproducidas en Apple Music (Mock)"""
-    _ensure_platform_linked(db, "apple")
+    _ensure_platform_linked(user, db, "apple")
     return _get_mock_streaming_response("apple", "recently_played")
 
 
@@ -856,7 +864,7 @@ def apple_recently_played(db: Session = Depends(get_db)):
 # ENDPOINTS DE SPOTIFY API (Proxy)
 # ============================================================================
 
-async def _get_spotify_token(db: Session) -> str:
+async def _get_spotify_token(db: Session, user: User) -> str:
     """Obtener token de acceso de Spotify. Refresca automáticamente si expiró."""
     if not settings.spotify_client_id or not settings.spotify_client_secret:
         raise HTTPException(
@@ -864,7 +872,7 @@ async def _get_spotify_token(db: Session) -> str:
             detail="Spotify OAuth no está configurado correctamente en .env.",
         )
  
-    user = _get_or_create_demo_user(db)
+    user = get_current_user(None, db)
     account = db.query(UserStreamingAccount).filter_by(
         user_id=user.id, platform="spotify"
     ).first()
@@ -1037,27 +1045,28 @@ async def _get_lastfm_artist_data(artist_name: str) -> dict:
 
 
 @app.get("/spotify/me")
-async def spotify_get_profile(db: Session = Depends(get_db)):
+async def spotify_get_profile(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Obtener perfil del usuario de Spotify"""
-    token = await _get_spotify_token(db)
+    token = await _get_spotify_token(db, user)
     return await _spotify_api_request("/me", token)
 
 
 @app.get("/spotify/me/playlists")
-async def spotify_get_playlists(db: Session = Depends(get_db), limit: int = 50):
+async def spotify_get_playlists(user: User = Depends(get_current_user), db: Session = Depends(get_db), limit: int = 50):
     """Obtener playlists del usuario"""
-    token = await _get_spotify_token(db)
+    token = await _get_spotify_token(db, user)
     return await _spotify_api_request(f"/me/playlists?limit={limit}", token)
 
 
 @app.get("/spotify/me/top/tracks")
 async def spotify_get_top_tracks(
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     limit: int = 50,
     time_range: str = "medium_term"
 ):
     """Obtener canciones favoritas del usuario"""
-    token = await _get_spotify_token(db)
+    token = await _get_spotify_token(db, user)
     return await _spotify_api_request(
         f"/me/top/tracks?limit={limit}&time_range={time_range}",
         token
@@ -1066,12 +1075,13 @@ async def spotify_get_top_tracks(
 
 @app.get("/spotify/me/top/artists")
 async def spotify_get_top_artists(
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     limit: int = 50,
     time_range: str = "medium_term"
 ):
     """Obtener artistas favoritos del usuario"""
-    token = await _get_spotify_token(db)
+    token = await _get_spotify_token(db, user)
     return await _spotify_api_request(
         f"/me/top/artists?limit={limit}&time_range={time_range}",
         token
@@ -1079,16 +1089,16 @@ async def spotify_get_top_artists(
 
 
 @app.get("/spotify/me/tracks")
-async def spotify_get_saved_tracks(db: Session = Depends(get_db), limit: int = 50):
+async def spotify_get_saved_tracks(user: User = Depends(get_current_user), db: Session = Depends(get_db), limit: int = 50):
     """Obtener canciones guardadas (liked songs)"""
-    token = await _get_spotify_token(db)
+    token = await _get_spotify_token(db, user)
     return await _spotify_api_request(f"/me/tracks?limit={limit}", token)
 
 
 @app.get("/spotify/me/player/recently-played")
-async def spotify_get_recently_played(db: Session = Depends(get_db), limit: int = 50):
+async def spotify_get_recently_played(user: User = Depends(get_current_user), db: Session = Depends(get_db), limit: int = 50):
     """Obtener canciones recientemente reproducidas"""
-    token = await _get_spotify_token(db)
+    token = await _get_spotify_token(db, user)
     return await _spotify_api_request(
         f"/me/player/recently-played?limit={limit}",
         token
@@ -1096,9 +1106,9 @@ async def spotify_get_recently_played(db: Session = Depends(get_db), limit: int 
 
 
 @app.get("/spotify/playlists/{playlist_id}")
-async def spotify_get_playlist(playlist_id: str, db: Session = Depends(get_db)):
+async def spotify_get_playlist(playlist_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Obtener detalles de una playlist y asegurar que traiga las canciones con la nueva API"""
-    token = await _get_spotify_token(db)
+    token = await _get_spotify_token(db, user)
     
     try:
         playlist_data = await _spotify_api_request(f"/playlists/{playlist_id}", token)
@@ -1141,12 +1151,13 @@ async def spotify_get_playlist(playlist_id: str, db: Session = Depends(get_db)):
 @app.get("/spotify/search")
 async def spotify_search(
     q: str,
+    user: User = Depends(get_current_user),
     type: str = "track,artist,album",
     limit: int = 20,
     db: Session = Depends(get_db)
 ):
     """Buscar en Spotify"""
-    token = await _get_spotify_token(db)
+    token = await _get_spotify_token(db, user)
     query = quote(q)
     return await _spotify_api_request(
         f"/search?q={query}&type={type}&limit={limit}",
@@ -1154,9 +1165,9 @@ async def spotify_search(
     )
 
 @app.get("/spotify/artists/{artist_id}")
-async def spotify_get_artist(artist_id: str, db: Session = Depends(get_db)):
+async def spotify_get_artist(artist_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Obtener expediente completo de un artista, enriquecido con Last.fm."""
-    token = await _get_spotify_token(db)
+    token = await _get_spotify_token(db, user)
     data = await _spotify_api_request(f"/artists/{artist_id}", token)
 
     # Si Spotify devuelve objeto simplificado (sin géneros/seguidores),
@@ -1174,8 +1185,8 @@ async def spotify_get_artist(artist_id: str, db: Session = Depends(get_db)):
     return data
 
 @app.get("/spotify/artists/{artist_id}/user-playlists")
-async def spotify_get_artist_user_playlists(artist_id: str, db: Session = Depends(get_db)):
-    token = await _get_spotify_token(db)
+async def spotify_get_artist_user_playlists(artist_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    token = await _get_spotify_token(db, user)
 
     me = await _spotify_api_request("/me", token)
     my_id = me.get("id")
@@ -1253,26 +1264,33 @@ async def spotify_get_artist_user_playlists(artist_id: str, db: Session = Depend
     return {"playlists": matching}
 
 @app.get("/spotify/artists/{artist_id}/top-tracks")
-async def spotify_get_artist_top_tracks(artist_id: str, db: Session = Depends(get_db)):
-    token = await _get_spotify_token(db)
+async def spotify_get_artist_top_tracks(artist_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    token = await _get_spotify_token(db, user)
 
     # Nombre del artista
     artist_data = await _spotify_api_request(f"/artists/{artist_id}", token)
     artist_name = artist_data.get("name", "")
 
     # Top tracks de Last.fm
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        res = await client.get(
-            "https://ws.audioscrobbler.com/2.0/",
-            params={
-                "method": "artist.gettoptracks",
-                "artist": artist_name,
-                "api_key": settings.lastfm_api_key,
-                "format": "json",
-                "limit": 5,  # solo 5
-            },
-        )
-    raw_tracks = res.json().get("toptracks", {}).get("track", [])
+    raw_tracks = []
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            res = await client.get(
+                "https://ws.audioscrobbler.com/2.0/",
+                params={
+                    "method": "artist.gettoptracks",
+                    "artist": artist_name,
+                    "api_key": settings.lastfm_api_key,
+                    "format": "json",
+                    "limit": 5,  # solo 5
+                },
+            )
+        if res.status_code == 200:
+            raw_tracks = res.json().get("toptracks", {}).get("track", [])
+        else:
+            logger.warning(f"Last.fm API error: {res.status_code}")
+    except Exception as e:
+        logger.error(f"Error consultando top tracks en Last.fm para '{artist_name}': {e}")
 
     # Enriquecer cada track con imagen real de Spotify
     tracks = []

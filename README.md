@@ -62,7 +62,7 @@ Opcional:
 ## Clonar e inicializar el proyecto
 
 ```powershell
-git clone <URL_DEL_REPO>
+git clone <https://github.com/Rubensos21/soundFlow.git>
 cd soundFlow
 ```
 
@@ -113,7 +113,7 @@ Documentacion Swagger:
 Abre una segunda terminal (deja el backend corriendo en la primera):
 
 ```powershell
-cd D:\VisualStudioCode\soundFlow
+chttp://localhost:8000/health
 flutter run -d windows
 ```
 
@@ -222,7 +222,3 @@ flutter test
 - Backend con endpoints funcionales para desarrollo local
 - Integraciones OAuth en modo mock para pruebas
 - Frontend Flutter listo para ejecutar en Windows y web
-
----
-
-Si quieres, puedo agregar una seccion de despliegue (release APK/EXE y backend en produccion) en este mismo README.
