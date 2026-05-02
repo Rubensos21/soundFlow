@@ -1,9 +1,42 @@
 import 'package:flutter/material.dart';
 import 'playlist_result.dart';
 import 'prompt_playlist.dart';
+import 'services/api_client.dart';
 
-class ExploreScreen extends StatelessWidget {
+class ExploreScreen extends StatefulWidget {
   const ExploreScreen({super.key});
+
+  @override
+  State<ExploreScreen> createState() => _ExploreScreenState();
+}
+
+class _ExploreScreenState extends State<ExploreScreen> {
+  final ApiClient _api = ApiClient();
+  List<Map<String, dynamic>> _communityPlaylists = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCommunityPlaylists();
+  }
+
+  Future<void> _loadCommunityPlaylists() async {
+    try {
+      final res = await _api.getCommunityPlaylists();
+      setState(() {
+        if (res.containsKey('playlists')) {
+          _communityPlaylists = List<Map<String, dynamic>>.from(res['playlists']);
+        }
+        _isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Error loading community playlists: $e');
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -30,45 +63,56 @@ class ExploreScreen extends StatelessWidget {
                   // Playlist de la comunidad
                   _sectionHeader('Playlist de la comunidad'),
                   const SizedBox(height: 12),
-                  SizedBox(
-                    height: 110,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: 6,
-                      separatorBuilder: (_, __) => const SizedBox(width: 14),
-                      itemBuilder: (context, index) {
-                        final asset = _covers[index % _covers.length];
-                        return GestureDetector(
-                          onTap: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => const PlaylistResultScreen(
-                                  title: 'Playlist de la comunidad',
-                                  subtitleUser: 'Sound Flow',
-                                  mood: 'Explorar',
-                                  playlistId: '', // <--- AGREGADO
+                  if (_isLoading)
+                    const SizedBox(height: 110, child: Center(child: CircularProgressIndicator(color: Colors.white)))
+                  else if (_communityPlaylists.isEmpty)
+                    const SizedBox(height: 110, child: Center(child: Text('No hay playlists en la comunidad', style: TextStyle(color: Colors.white70))))
+                  else
+                    SizedBox(
+                      height: 110,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _communityPlaylists.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 14),
+                        itemBuilder: (context, index) {
+                          final pl = _communityPlaylists[index];
+                          final asset = _covers[index % _covers.length];
+                          return GestureDetector(
+                            onTap: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => PlaylistResultScreen(
+                                    title: pl['name'] ?? 'Playlist de la comunidad',
+                                    subtitleUser: pl['author'] ?? 'Sound Flow',
+                                    mood: pl['emotion'] ?? pl['method'] ?? 'Explorar',
+                                    playlistId: pl['id']?.toString() ?? '',
+                                  ),
                                 ),
-                              ),
-                            );
-                          },
-                          child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(12),
-                              child: Image.asset(asset, width: 120, height: 80, fit: BoxFit.cover),
+                              );
+                            },
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Image.asset(asset, width: 120, height: 80, fit: BoxFit.cover),
+                                ),
+                                const SizedBox(height: 6),
+                                SizedBox(
+                                  width: 120,
+                                  child: Text(
+                                    pl['name'] ?? 'Musica',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(color: Colors.white, fontSize: 11.5, fontFamily: 'Poppins'),
+                                  ),
+                                )
+                              ],
                             ),
-                            const SizedBox(height: 6),
-                            const Text(
-                              'Musica relajante',
-                              style: TextStyle(color: Colors.white, fontSize: 11.5, fontFamily: 'Poppins'),
-                            )
-                          ],
-                        ),
-                        );
-                      },
+                          );
+                        },
+                      ),
                     ),
-                  ),
 
                   const SizedBox(height: 18),
 
@@ -122,14 +166,14 @@ class ExploreScreen extends StatelessWidget {
                 );
               },
               child: Container(
-              width: 64,
-              height: 64,
-              decoration: const BoxDecoration(
-                color: Color(0xFF9C7CFE),
-                shape: BoxShape.circle,
+                width: 64,
+                height: 64,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF9C7CFE),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.sports_motorsports_outlined, color: Colors.white, size: 30),
               ),
-              child: const Icon(Icons.sports_motorsports_outlined, color: Colors.white, size: 30),
-            ),
             ),
           ),
         ),
@@ -182,42 +226,42 @@ class ExploreScreen extends StatelessWidget {
                 title: s.title, 
                 subtitleUser: 'Tú', 
                 mood: 'Guardados',
-                playlistId: '', // <--- AGREGADO
-                imageUrl: s.cover, // <--- AGREGADO
+                playlistId: '',
+                imageUrl: s.cover,
               ),
             ),
           );
         },
         child: Row(
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: Image.asset(s.cover, width: 44, height: 44, fit: BoxFit.cover),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  s.title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 14,
-                    fontFamily: 'Poppins',
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  s.meta,
-                  style: const TextStyle(color: Colors.white70, fontSize: 11.5, fontFamily: 'Poppins'),
-                ),
-              ],
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.asset(s.cover, width: 44, height: 44, fit: BoxFit.cover),
             ),
-          ),
-          Icon(Icons.chevron_right, color: Colors.white.withOpacity(0.9)),
-        ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    s.title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                      fontFamily: 'Poppins',
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    s.meta,
+                    style: const TextStyle(color: Colors.white70, fontSize: 11.5, fontFamily: 'Poppins'),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: Colors.white.withOpacity(0.9)),
+          ],
         ),
       ),
     );
@@ -234,16 +278,16 @@ class ExploreScreen extends StatelessWidget {
             );
           },
           child: Container(
-          width: 66,
-          height: 66,
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.12),
-            shape: BoxShape.circle,
+            width: 66,
+            height: 66,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: Text(icon, style: const TextStyle(fontSize: 28)),
+            ),
           ),
-          child: Center(
-            child: Text(icon, style: const TextStyle(fontSize: 28)),
-          ),
-        ),
         ),
         const SizedBox(height: 6),
         Text(
@@ -275,5 +319,3 @@ const List<_Mood> _moods = [
   _Mood('🧠', 'Concentración'),
   _Mood('🎉', 'Party'),
 ];
-
-

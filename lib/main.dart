@@ -153,10 +153,6 @@ class _LoginScreenState extends State<LoginScreen> {
     switch (platform) {
       case 'spotify':
         return 'Spotify';
-      case 'deezer':
-        return 'Deezer';
-      case 'apple':
-        return 'Apple Music';
       default:
         return platform;
     }
@@ -166,10 +162,6 @@ class _LoginScreenState extends State<LoginScreen> {
     switch (platform) {
       case 'spotify':
         return const Color(0xFF1DB954);
-      case 'deezer':
-        return const Color(0xFFEF5466);
-      case 'apple':
-        return const Color(0xFFFA2D48);
       default:
         return Colors.white.withOpacity(0.6);
     }

@@ -11,6 +11,7 @@ import 'createPlaylist.dart';
 import 'my_music_screen.dart';
 import 'services/api_client.dart';
 import 'prompt_playlist.dart';
+import 'facial_scan_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final int initialIndex;
@@ -515,7 +516,9 @@ void showCreatePlaylistBlur(BuildContext context) {
                         child: GestureDetector(
                           onTap: () {
                             Navigator.of(context).pop();
-                            _showImagePickerMenu(context);
+                            Navigator.of(context).push(
+                              MaterialPageRoute(builder: (_) => const FacialScanScreen()),
+                            );
                           },
                           child: Container(
                             decoration: BoxDecoration(

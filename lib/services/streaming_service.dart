@@ -81,7 +81,8 @@ abstract class StreamingService {
       if (kDebugMode) {
         print('StreamingService($platform): GET $uri');
       }
-      final response = await http.get(uri);
+      final headers = await _apiClient.getHeaders();
+      final response = await http.get(uri, headers: headers);
 
       if (kDebugMode) {
         print('StreamingService($platform): Status ${response.statusCode}');

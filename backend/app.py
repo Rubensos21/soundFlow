@@ -30,7 +30,7 @@ emotion_detector = EmotionDetector()
 prompt_processor = PromptProcessor()
 
 
-PLATFORMS = {"spotify", "deezer", "apple"}
+PLATFORMS = {"spotify"}
 
 PLATFORM_NAMES = {
     "spotify": "Spotify",
@@ -476,6 +476,11 @@ async def auth_callback(platform: str, code: str = None, state: str = None, erro
                 platform_user_id = spotify_user.get("id", "unknown")
                 display_name = spotify_user.get("display_name") or platform_user_id
 
+                # Update the main user display_name with Spotify's
+                if display_name and display_name != platform_user_id:
+                    user.display_name = display_name
+                    db.commit()
+
                 logger.info(f"Spotify OAuth exitoso para usuario: {platform_user_id} ({display_name})")
         except HTTPException:
             raise
@@ -793,71 +798,101 @@ def delete_generated_playlist(playlist_id: int, db: Session = Depends(get_db)):
     
     return {"success": True, "message": "Playlist eliminada"}
 
-
 # ============================================================================
-# ENDPOINTS DE DEEZER (Mock)
+# ENDPOINTS DE DEEZER Y APPLE MUSIC (deshabilitados para versiones futuras)
 # ============================================================================
-
-
-@app.get("/deezer/me")
-def deezer_get_profile(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Obtener perfil del usuario de Deezer (Mock)"""
-    _ensure_platform_linked(user, db, "deezer")
-    return _get_mock_streaming_response("deezer", "profile")
-
-
-@app.get("/deezer/me/playlists")
-def deezer_get_playlists(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Obtener playlists del usuario de Deezer (Mock)"""
-    _ensure_platform_linked(user, db, "deezer")
-    return _get_mock_streaming_response("deezer", "playlists")
-
-
-@app.get("/deezer/me/top/tracks")
-def deezer_get_top_tracks(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Obtener canciones favoritas del usuario de Deezer (Mock)"""
-    _ensure_platform_linked(user, db, "deezer")
-    return _get_mock_streaming_response("deezer", "top_tracks")
-
-
-@app.get("/deezer/me/player/recently-played")
-def deezer_recently_played(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Obtener canciones recientemente reproducidas en Deezer (Mock)"""
-    _ensure_platform_linked(user, db, "deezer")
-    return _get_mock_streaming_response("deezer", "recently_played")
+# Estos endpoints han sido comentados porque actualmente solo se usa Spotify.
+# Se rehabilitarán en versiones futuras de la app.
 
 
 # ============================================================================
-# ENDPOINTS DE APPLE MUSIC (Mock)
+# ENDPOINTS DE PERFIL Y COMUNIDAD
 # ============================================================================
 
+from pydantic import BaseModel as PydanticBaseModel
+from typing import Optional as Opt
 
-@app.get("/apple/me")
-def apple_get_profile(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Obtener perfil del usuario de Apple Music (Mock)"""
-    _ensure_platform_linked(user, db, "apple")
-    return _get_mock_streaming_response("apple", "profile")
+class UserProfileUpdate(PydanticBaseModel):
+    display_name: Opt[str] = None
+    dob: Opt[str] = None
+    gender: Opt[str] = None
 
+@app.get("/me/profile")
+async def get_user_profile(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Try to enrich with live Spotify data
+    spotify_acct = db.query(UserStreamingAccount).filter_by(user_id=user.id, platform="spotify").first()
+    spotify_name = user.display_name
+    spotify_avatar = None
 
-@app.get("/apple/me/playlists")
-def apple_get_playlists(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Obtener playlists del usuario de Apple Music (Mock)"""
-    _ensure_platform_linked(user, db, "apple")
-    return _get_mock_streaming_response("apple", "playlists")
+    if spotify_acct and spotify_acct.access_token:
+        try:
+            sp_profile = await _spotify_user_profile(spotify_acct.access_token, strict=False)
+            if sp_profile:
+                live_name = sp_profile.get("display_name") or spotify_name
+                # Sync display_name into DB if it changed
+                if live_name and live_name != user.display_name:
+                    user.display_name = live_name
+                    db.commit()
+                spotify_name = live_name
+                images = sp_profile.get("images", [])
+                if images:
+                    spotify_avatar = images[0].get("url")
+        except Exception:
+            pass  # Use stored values as fallback
 
+    return {
+        "id": user.id,
+        "email": user.email,
+        "display_name": spotify_name or user.display_name,
+        "dob": getattr(user, 'dob', None),
+        "gender": getattr(user, 'gender', None),
+        "avatar_url": spotify_avatar,
+        "created_at": str(user.created_at) if user.created_at else None
+    }
 
-@app.get("/apple/me/top/tracks")
-def apple_get_top_tracks(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Obtener canciones favoritas del usuario de Apple Music (Mock)"""
-    _ensure_platform_linked(user, db, "apple")
-    return _get_mock_streaming_response("apple", "top_tracks")
+@app.put("/me/profile")
+async def update_user_profile(profile: UserProfileUpdate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if profile.display_name is not None:
+        user.display_name = profile.display_name
+    if profile.dob is not None:
+        user.dob = profile.dob
+    if profile.gender is not None:
+        user.gender = profile.gender
+    db.commit()
+    db.refresh(user)
+    return {
+        "id": user.id,
+        "email": user.email,
+        "display_name": user.display_name,
+        "dob": getattr(user, 'dob', None),
+        "gender": getattr(user, 'gender', None)
+    }
 
+@app.get("/api/playlists/community")
+async def get_community_playlists(db: Session = Depends(get_db)):
+    playlists = db.query(AIGeneratedPlaylist).order_by(AIGeneratedPlaylist.created_at.desc()).limit(20).all()
+    results = []
+    for p in playlists:
+        u = db.query(User).filter(User.id == p.user_id).first()
+        author_name = u.display_name if u and u.display_name else "Usuario Anónimo"
+        
+        tracks_list = []
+        if isinstance(p.tracks, dict) and "items" in p.tracks:
+            tracks_list = p.tracks["items"]
+        elif isinstance(p.tracks, list):
+            tracks_list = p.tracks
 
-@app.get("/apple/me/player/recently-played")
-def apple_recently_played(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Obtener canciones recientemente reproducidas en Apple Music (Mock)"""
-    _ensure_platform_linked(user, db, "apple")
-    return _get_mock_streaming_response("apple", "recently_played")
+        results.append({
+            "id": p.id,
+            "name": p.playlist_name,
+            "method": p.generation_method,
+            "emotion": p.emotion_detected,
+            "platform": p.platform,
+            "tracks_count": len(tracks_list),
+            "author": author_name,
+            "created_at": p.created_at.isoformat() if p.created_at else None
+        })
+    return {"playlists": results}
 
 
 # ============================================================================

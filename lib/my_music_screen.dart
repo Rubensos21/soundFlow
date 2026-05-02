@@ -6,8 +6,6 @@ import 'package:url_launcher/url_launcher.dart';
 import 'widgets/app_bottom_nav.dart';
 import 'home.dart';
 import 'services/api_client.dart';
-import 'services/apple_music_service.dart';
-import 'services/deezer_service.dart';
 import 'services/spotify_service.dart';
 import 'services/streaming_service.dart';
 
@@ -22,11 +20,9 @@ class _MyMusicScreenState extends State<MyMusicScreen>
     with SingleTickerProviderStateMixin {
   static const Map<String, String> _platformLogos = {
     'spotify': 'assets/svg/spotify.svg',
-    'deezer': 'assets/svg/deezer.svg',
-    'apple': 'assets/svg/applemusic.svg',
   };
 
-  static const List<String> _platformOrder = ['spotify', 'deezer', 'apple'];
+  static const List<String> _platformOrder = ['spotify'];
 
   late TabController _tabController;
   late final Map<String, StreamingService> _streamingServices;
@@ -52,8 +48,6 @@ class _MyMusicScreenState extends State<MyMusicScreen>
     _tabController = TabController(length: 3, vsync: this);
     _streamingServices = {
       'spotify': SpotifyService(),
-      'deezer': DeezerService(),
-      'apple': AppleMusicService(),
     };
     _loadStreamingData();
   }
@@ -287,7 +281,7 @@ class _MyMusicScreenState extends State<MyMusicScreen>
                 textAlign: TextAlign.center),
             const SizedBox(height: 12),
             Text(
-              'Vincula Spotify, Deezer o Apple Music para ver tus playlists, favoritos y recientes.',
+              'Vincula Spotify para ver tus playlists, favoritos y recientes.',
               style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 15, fontFamily: 'Poppins'),
               textAlign: TextAlign.center,
             ),
@@ -297,11 +291,7 @@ class _MyMusicScreenState extends State<MyMusicScreen>
               child: ElevatedButton.icon(
                 onPressed: () => _connectPlatform(p),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: p == 'spotify'
-                      ? const Color(0xFF1DB954)
-                      : p == 'deezer'
-                          ? const Color(0xFFEF5466)
-                          : const Color(0xFFFA2D48),
+                  backgroundColor: const Color(0xFF1DB954),
                   minimumSize: const Size(double.infinity, 52),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(26)),
                   elevation: 0,

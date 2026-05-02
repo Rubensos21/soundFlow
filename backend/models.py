@@ -9,6 +9,8 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String(255), unique=True, index=True, nullable=False)
     display_name = Column(String(255))
+    dob = Column(String(20))
+    gender = Column(String(20))
     created_at = Column(TIMESTAMP, server_default=func.now())
 
     streaming_accounts = relationship("UserStreamingAccount", back_populates="user")

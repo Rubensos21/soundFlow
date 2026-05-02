@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 class ApiClient {
   ApiClient({String? baseUrl})
@@ -27,6 +29,31 @@ class ApiClient {
   }
 
   String get baseUrl => _baseUrl;
+  static String? _deviceIdCache;
+
+  Future<String> getDeviceId() async {
+    if (_deviceIdCache != null) return _deviceIdCache!;
+    final prefs = await SharedPreferences.getInstance();
+    String? deviceId = prefs.getString('device_id');
+    if (deviceId == null) {
+      deviceId = const Uuid().v4();
+      await prefs.setString('device_id', deviceId);
+    }
+    _deviceIdCache = deviceId;
+    return deviceId;
+  }
+
+  Future<Map<String, String>> getHeaders([Map<String, String>? extra]) async {
+    final deviceId = await getDeviceId();
+    final headers = {
+      'x-device-id': deviceId,
+    };
+    if (extra != null) {
+      headers.addAll(extra);
+    }
+    return headers;
+  }
+
 
   String getAuthUrlForBrowser(String platform) {
     if (!kIsWeb && Platform.isAndroid) {
@@ -59,7 +86,7 @@ class ApiClient {
     final uri = Uri.parse('$_baseUrl/api/generate-playlist/prompt');
     final res = await http.post(
       uri,
-      headers: {'Content-Type': 'application/json'},
+      headers: await getHeaders({'Content-Type': 'application/json'}),
       body: jsonEncode({'prompt': prompt}),
     );
     if (res.statusCode >= 200 && res.statusCode < 300) {
@@ -71,6 +98,7 @@ class ApiClient {
   Future<Map<String, dynamic>> generatePlaylistFromFacial(XFile imageFile) async {
     final uri = Uri.parse('$_baseUrl/api/generate-playlist/facial');
     final request = http.MultipartRequest('POST', uri);
+    request.headers.addAll(await getHeaders());
     final bytes = await imageFile.readAsBytes();
     request.files.add(http.MultipartFile.fromBytes('image', bytes, filename: imageFile.name));
     final streamed = await request.send();
@@ -85,7 +113,7 @@ class ApiClient {
 
   Future<Map<String, dynamic>> getLinkedAccounts() async {
     final uri = Uri.parse('$_baseUrl/me/linked-accounts');
-    final res = await http.get(uri);
+    final res = await http.get(uri, headers: await getHeaders());
     if (res.statusCode >= 200 && res.statusCode < 300) {
       return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
@@ -108,16 +136,52 @@ class ApiClient {
     final uri = Uri.parse('$_baseUrl/auth/$platform/callback').replace(
       queryParameters: {'code': code, 'state': state},
     );
-    final res = await http.get(uri);
+    final res = await http.get(uri, headers: await getHeaders());
     if (res.statusCode >= 200 && res.statusCode < 300) {
       return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
     throw Exception('Error ${res.statusCode}: ${res.body}');
   }
 
-  Future<Map<String, dynamic>> getGeneratedPlaylists() async {
+  
+  Future<Map<String, dynamic>> getUserProfile() async {
+    final uri = Uri.parse('$_baseUrl/me/profile');
+    final res = await http.get(uri, headers: await getHeaders());
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
+    }
+    throw Exception('Error fetching profile: ${res.statusCode}');
+  }
+
+  Future<Map<String, dynamic>> updateUserProfile(String? displayName, String? dob, String? gender) async {
+    final uri = Uri.parse('$_baseUrl/me/profile');
+    final res = await http.put(
+      uri,
+      headers: await getHeaders({'Content-Type': 'application/json'}),
+      body: jsonEncode({
+        'display_name': displayName,
+        'dob': dob,
+        'gender': gender,
+      }),
+    );
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
+    }
+    throw Exception('Error updating profile: ${res.statusCode}');
+  }
+
+  Future<Map<String, dynamic>> getCommunityPlaylists() async {
+    final uri = Uri.parse('$_baseUrl/api/playlists/community');
+    final res = await http.get(uri, headers: await getHeaders());
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
+    }
+    throw Exception('Error fetching community playlists: ${res.statusCode}');
+  }
+
+Future<Map<String, dynamic>> getGeneratedPlaylists() async {
     final uri = Uri.parse('$_baseUrl/api/playlists/generated');
-    final res = await http.get(uri);
+    final res = await http.get(uri, headers: await getHeaders());
     if (res.statusCode >= 200 && res.statusCode < 300) {
       return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
@@ -126,7 +190,7 @@ class ApiClient {
 
   Future<Map<String, dynamic>> getGeneratedPlaylistDetail(int playlistId) async {
     final uri = Uri.parse('$_baseUrl/api/playlists/generated/$playlistId');
-    final res = await http.get(uri);
+    final res = await http.get(uri, headers: await getHeaders());
     if (res.statusCode >= 200 && res.statusCode < 300) {
       return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
@@ -135,7 +199,7 @@ class ApiClient {
 
   Future<Map<String, dynamic>> deleteGeneratedPlaylist(int playlistId) async {
     final uri = Uri.parse('$_baseUrl/api/playlists/generated/$playlistId');
-    final res = await http.delete(uri);
+    final res = await http.delete(uri, headers: await getHeaders());
     if (res.statusCode >= 200 && res.statusCode < 300) {
       return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
@@ -144,7 +208,7 @@ class ApiClient {
 
   Future<Map<String, dynamic>> getSpotifyProfile() async {
     final uri = Uri.parse('$_baseUrl/spotify/me');
-    final res = await http.get(uri);
+    final res = await http.get(uri, headers: await getHeaders());
     if (res.statusCode >= 200 && res.statusCode < 300) {
       return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
@@ -153,7 +217,7 @@ class ApiClient {
 
   Future<Map<String, dynamic>> getTopArtists({int limit = 4}) async {
     final uri = Uri.parse('$_baseUrl/spotify/me/top/artists?limit=$limit');
-    final res = await http.get(uri);
+    final res = await http.get(uri, headers: await getHeaders());
     if (res.statusCode >= 200 && res.statusCode < 300) {
       return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
@@ -168,7 +232,7 @@ class ApiClient {
       print('\n[getArtistDetails] GET $uri');
     }
 
-    final res = await http.get(uri);
+    final res = await http.get(uri, headers: await getHeaders());
 
     if (kDebugMode) {
       _printFull('getArtistDetails BODY (status=${res.statusCode})', res.body);
@@ -196,7 +260,7 @@ class ApiClient {
 
   Future<Map<String, dynamic>> getArtistUserPlaylists(String artistId) async {
     final uri = Uri.parse('$_baseUrl/spotify/artists/$artistId/user-playlists');
-    final res = await http.get(uri);
+    final res = await http.get(uri, headers: await getHeaders());
     if (res.statusCode >= 200 && res.statusCode < 300) {
       return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }
@@ -206,7 +270,7 @@ class ApiClient {
   // ── NUEVO: Obtener las canciones más populares del artista ──
   Future<Map<String, dynamic>> getArtistTopTracks(String artistId) async {
     final uri = Uri.parse('$_baseUrl/spotify/artists/$artistId/top-tracks');
-    final res = await http.get(uri);
+    final res = await http.get(uri, headers: await getHeaders());
     if (res.statusCode >= 200 && res.statusCode < 300) {
       return jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
     }

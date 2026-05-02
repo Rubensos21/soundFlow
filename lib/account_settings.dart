@@ -13,27 +13,68 @@ class AccountSettingsScreen extends StatefulWidget {
 }
 
 class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
+  static const _kAccent = Color(0xFF9C7CFE);
+  static const _kGreen  = Color(0xFF1DB954);
+
+  final ApiClient _api = ApiClient();
+
   List<Map<String, dynamic>> _linkedAccounts = [];
-  bool _loadingAccounts = true;
+  bool    _loadingAccounts = true;
+  bool    _loadingProfile  = true;
+  String  _displayName     = '';
+  String? _avatarUrl;
+  int     _followers       = 0;
+  String  _spotifyId       = '';
 
   @override
   void initState() {
     super.initState();
-    _loadLinkedAccounts();
+    _loadAll();
+  }
+
+  Future<void> _loadAll() async {
+    await Future.wait([_loadProfile(), _loadLinkedAccounts()]);
+  }
+
+  Future<void> _loadProfile() async {
+    try {
+      final results = await Future.wait([
+        _api.getSpotifyProfile().catchError((_) => <String, dynamic>{}),
+        _api.getUserProfile().catchError((_) => <String, dynamic>{}),
+      ]);
+      final sp    = results[0] as Map<String, dynamic>;
+      final local = results[1] as Map<String, dynamic>;
+      if (!mounted) return;
+      setState(() {
+        _displayName = sp['display_name'] as String? ?? local['display_name'] as String? ?? '';
+        _spotifyId   = sp['id'] as String? ?? '';
+        final images = sp['images'] as List?;
+        if (images != null && images.isNotEmpty) {
+          _avatarUrl = (images.first as Map<String, dynamic>)['url'] as String?;
+        }
+        final followersObj = sp['followers'];
+        if (followersObj is Map) {
+          _followers = (followersObj['total'] as num?)?.toInt() ?? 0;
+        }
+        _loadingProfile = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loadingProfile = false);
+    }
   }
 
   Future<void> _loadLinkedAccounts() async {
     try {
-      final api = ApiClient();
-      final response = await api.getLinkedAccounts();
+      final response = await _api.getLinkedAccounts();
+      if (!mounted) return;
       setState(() {
         _linkedAccounts = List<Map<String, dynamic>>.from(response['accounts'] ?? []);
         _loadingAccounts = false;
       });
     } catch (e) {
-      setState(() {
-        _loadingAccounts = false;
-      });
+      if (!mounted) return;
+      setState(() => _loadingAccounts = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error cargando cuentas: $e')),
@@ -140,30 +181,79 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
                 ],
               ),
               const Divider(color: Colors.white24),
-              Row(
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Image.asset('assets/images/perfil.png', width: 64, height: 64, fit: BoxFit.cover),
+              if (_loadingProfile)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  child: Center(child: CircularProgressIndicator(color: _kAccent)),
+                )
+              else
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.04),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.white.withOpacity(0.07)),
                   ),
-                  const SizedBox(width: 12),
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Yael Flores', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16, fontFamily: 'Poppins')),
-                        SizedBox(height: 2),
-                        Text('yaelflores69@gmail.com', style: TextStyle(color: Colors.white70, fontSize: 12, fontFamily: 'Poppins')),
-                        Text('User ID: 1279738746', style: TextStyle(color: Colors.white70, fontSize: 12, fontFamily: 'Poppins')),
-                      ],
-                    ),
-                  )
-                ],
-              ),
+                  child: Row(
+                    children: [
+                      Stack(
+                        children: [
+                          Container(
+                            width: 64, height: 64,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: const LinearGradient(colors: [_kAccent, Color(0xFF7B5EA7)]),
+                              boxShadow: [BoxShadow(color: _kAccent.withOpacity(0.35), blurRadius: 12)],
+                            ),
+                            child: ClipOval(
+                              child: _avatarUrl != null
+                                  ? Image.network(_avatarUrl!, fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => const Icon(Icons.person, color: Colors.white54, size: 32))
+                                  : const Icon(Icons.person, color: Colors.white54, size: 32),
+                            ),
+                          ),
+                          Positioned(
+                            bottom: 0, right: 0,
+                            child: Container(
+                              width: 20, height: 20,
+                              decoration: const BoxDecoration(color: _kGreen, shape: BoxShape.circle),
+                              child: const Icon(Icons.music_note, color: Colors.white, size: 12),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _displayName.isNotEmpty ? _displayName : 'Tu nombre',
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16, fontFamily: 'Poppins'),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 3),
+                            Row(
+                              children: [
+                                const Icon(Icons.people_outline, color: Colors.white54, size: 13),
+                                const SizedBox(width: 4),
+                                Text('$_followers Seguidores',
+                                  style: const TextStyle(color: Colors.white54, fontSize: 11, fontFamily: 'Poppins')),
+                              ],
+                            ),
+                            if (_spotifyId.isNotEmpty)
+                              Text('ID: $_spotifyId',
+                                style: TextStyle(color: Colors.white.withOpacity(0.3), fontSize: 10, fontFamily: 'Poppins'),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
 
               const SizedBox(height: 16),
-              _dividerField('Cambiar correo electronico'),
-              _dividerField('Cambiar Contraseña'),
               _dividerField('Información Personal'),
               
               // Cuentas Vinculadas
@@ -221,16 +311,16 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
   }
 
   List<Widget> _buildLinkedAccountsSection() {
-    final platforms = ['spotify', 'deezer', 'apple'];
+    final platforms = ['spotify']; //'deezer', 'apple'];
     final platformLogos = {
       'spotify': 'assets/svg/spotify.svg',
-      'deezer': 'assets/svg/deezer.svg',
-      'apple': 'assets/svg/applemusic.svg',
+      //'deezer': 'assets/svg/deezer.svg',
+      //'apple': 'assets/svg/applemusic.svg',
     };
     final platformNames = {
       'spotify': 'Spotify',
-      'deezer': 'Deezer',
-      'apple': 'Apple Music',
+      //'deezer': 'Deezer',
+      //'apple': 'Apple Music',
     };
 
     return platforms.map((platform) {
