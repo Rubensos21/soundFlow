@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from .config import settings
 from .db import Base, engine, get_db
 from .models import User, UserStreamingAccount, AIGeneratedPlaylist
-from .ai import EmotionDetector, PromptProcessor, HybridRecommender
+from .ai import EmotionDetector, PromptProcessor, HybridRecommender, MoodRecommender, EMOTION_ALIAS, MOOD_PLAYLIST_NAMES
 
 
 app = FastAPI(title=settings.app_name)
@@ -610,82 +610,153 @@ async def auth_callback(platform: str, code: str = None, state: str = None, erro
 
 
 @app.post("/api/generate-playlist/facial")
-async def generate_playlist_facial(image: UploadFile = File(...), db: Session = Depends(get_db)):
+async def generate_playlist_facial(
+    image: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Genera una playlist desde las liked songs del usuario
+    filtradas por la emoción detectada en la foto.
+    """
     user = get_current_user(None, db)
+
+    # 1. Detectar emoción (stub → producción: DeepFace)
     content = await image.read()
-    emotion, suggested = emotion_detector.detect_emotion_from_image(content)
-    recommender = HybridRecommender(user.id)
-    playlist = recommender.generate_playlist_based_on_emotion(emotion, confidence=0.8)
-    return {"success": True, "emotion_detected": emotion, "tracks_count": len(playlist), "playlist": playlist}
+    raw_emotion, _ = emotion_detector.detect_emotion_from_image(content)
+    mood = EMOTION_ALIAS.get(raw_emotion, "neutral")
 
-
-@app.post("/api/generate-playlist/prompt")
-async def generate_playlist_prompt(payload: dict, db: Session = Depends(get_db)):
-    user = get_current_user(None, db)
-    prompt = (payload or {}).get("prompt", "").strip()
-    if not prompt:
-        raise HTTPException(status_code=422, detail="prompt is required")
-    
-    # Analizar el prompt
-    analysis = prompt_processor.analyze_prompt(prompt)
-    logger.info(f"Análisis del prompt: {analysis}")
-    
-    # Intentar usar Spotify si está conectado
+    # 2. Obtener token de Spotify
     spotify_account = db.query(UserStreamingAccount).filter_by(
-        user_id=user.id,
-        platform="spotify"
+        user_id=user.id, platform="spotify"
     ).first()
-    
-    recommender = HybridRecommender(user.id)
-    playlist_tracks = []
-    
+
+    tracks: List[Dict] = []
+    total_analyzed = 0
+    source = "internal"
+
     if spotify_account and spotify_account.access_token:
-        # Generar playlist REAL desde Spotify
         try:
-            playlist_tracks = await recommender.generate_playlist_from_spotify(
-                analysis,
-                spotify_account.access_token,
-                limit=30
-            )
-            logger.info(f"Generadas {len(playlist_tracks)} canciones desde Spotify")
+            token = await _get_spotify_token(db, user)
+            rec = MoodRecommender(token)
+            tracks, total_analyzed = await rec.generate_playlist(mood, playlist_size=25)
+            source = "spotify_liked"
+            logger.info(f"Facial ({mood}): {len(tracks)} canciones de {total_analyzed} liked songs")
         except Exception as e:
-            logger.error(f"Error generando desde Spotify: {e}")
-            playlist_tracks = recommender.generate_playlist_from_prompt(analysis)
+            logger.error(f"MoodRecommender falló en facial: {e}")
+            tracks = HybridRecommender(user.id)._fake_tracks(mood)
     else:
-        # Fallback a playlist sintética
-        playlist_tracks = recommender.generate_playlist_from_prompt(analysis)
-        logger.info("Usando playlist sintética (Spotify no conectado)")
-    
-    # Generar nombre de playlist basado en el análisis
-    emotion = analysis.get('emotion', 'neutral')
-    genres = analysis.get('mentioned_genres', [])
-    activity = analysis.get('activity')
-    
-    playlist_name = _generate_playlist_name(prompt, emotion, genres, activity)
-    
-    # Guardar playlist en la base de datos
+        tracks = HybridRecommender(user.id)._fake_tracks(mood)
+        logger.warning("Spotify no conectado — usando tracks de respaldo")
+
+    # 3. Nombre de playlist
+    import random as _rand
+    names = MOOD_PLAYLIST_NAMES.get(mood, MOOD_PLAYLIST_NAMES["neutral"])
+    playlist_name = _rand.choice(names)
+
+    # 4. Guardar en BD
     ai_playlist = AIGeneratedPlaylist(
         user_id=user.id,
         playlist_name=playlist_name,
-        generation_method='prompt',
-        emotion_detected=emotion,
-        prompt_used=prompt,
-        tracks=playlist_tracks,  # Guardar como JSON
-        platform='spotify' if spotify_account else 'internal'
+        generation_method="facial",
+        emotion_detected=mood,
+        prompt_used=f"Escaneo facial → {mood}",
+        tracks=tracks,
+        platform=source,
     )
     db.add(ai_playlist)
     db.commit()
     db.refresh(ai_playlist)
-    
-    logger.info(f"Playlist '{playlist_name}' guardada con ID: {ai_playlist.id}")
-    
+
+    return {
+        "success": True,
+        "playlist_id": ai_playlist.id,
+        "playlist_name": playlist_name,
+        "emotion_detected": mood,
+        "tracks_count": len(tracks),
+        "total_liked_analyzed": total_analyzed,
+        "playlist": tracks,
+    }
+
+
+@app.post("/api/generate-playlist/prompt")
+async def generate_playlist_prompt(
+    payload: dict,
+    db: Session = Depends(get_db)
+):
+    """
+    Genera una playlist desde las liked songs del usuario
+    filtradas por el mood detectado en el prompt.
+    """
+    user = get_current_user(None, db)
+    prompt = (payload or {}).get("prompt", "").strip()
+    if not prompt:
+        raise HTTPException(status_code=422, detail="prompt is required")
+
+    # 1. Analizar prompt
+    analysis = prompt_processor.analyze_prompt(prompt)
+    mood     = analysis.get("mood", "neutral")
+    logger.info(f"Prompt analysis: mood={mood}, géneros={analysis.get('genres')}")
+
+    # 2. Obtener token de Spotify
+    spotify_account = db.query(UserStreamingAccount).filter_by(
+        user_id=user.id, platform="spotify"
+    ).first()
+
+    tracks: List[Dict] = []
+    total_analyzed = 0
+    source = "internal"
+
+    if spotify_account and spotify_account.access_token:
+        try:
+            token = await _get_spotify_token(db, user)
+            rec = MoodRecommender(token)
+            tracks, total_analyzed = await rec.generate_playlist(mood, playlist_size=25)
+            source = "spotify_liked"
+            logger.info(f"Prompt ({mood}): {len(tracks)} canciones de {total_analyzed} liked songs")
+        except Exception as e:
+            logger.error(f"MoodRecommender falló en prompt: {e}")
+            # Fallback: buscar en Spotify por géneros (comportamiento anterior)
+            try:
+                recommender = HybridRecommender(user.id)
+                tracks = await recommender.generate_playlist_from_spotify(
+                    analysis, spotify_account.access_token, limit=25
+                )
+                source = "spotify_search"
+            except Exception as e2:
+                logger.error(f"Fallback spotify también falló: {e2}")
+                tracks = HybridRecommender(user.id)._fake_tracks(mood)
+    else:
+        tracks = HybridRecommender(user.id)._fake_tracks(mood)
+        logger.warning("Spotify no conectado — usando tracks de respaldo")
+
+    # 3. Nombre de playlist
+    playlist_name = MoodRecommender.playlist_name_for_mood(mood, prompt)
+
+    # 4. Guardar en BD
+    ai_playlist = AIGeneratedPlaylist(
+        user_id=user.id,
+        playlist_name=playlist_name,
+        generation_method="prompt",
+        emotion_detected=mood,
+        prompt_used=prompt,
+        tracks=tracks,
+        platform=source,
+    )
+    db.add(ai_playlist)
+    db.commit()
+    db.refresh(ai_playlist)
+
+    logger.info(f"Playlist '{playlist_name}' guardada con ID: {ai_playlist.id} ({len(tracks)} tracks, source={source})")
+
     return {
         "success": True,
         "playlist_id": ai_playlist.id,
         "playlist_name": playlist_name,
         "analysis": analysis,
-        "tracks_count": len(playlist_tracks),
-        "playlist": playlist_tracks
+        "tracks_count": len(tracks),
+        "total_liked_analyzed": total_analyzed,
+        "source": source,
+        "playlist": tracks,
     }
 
 
