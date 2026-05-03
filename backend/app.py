@@ -683,80 +683,172 @@ async def generate_playlist_prompt(
     payload: dict,
     db: Session = Depends(get_db)
 ):
-    """
-    Genera una playlist desde las liked songs del usuario
-    filtradas por el mood detectado en el prompt.
-    """
+    import json
+    import re
+    from collections import Counter
+    from urllib.parse import quote
+    from fastapi import HTTPException
+    
     user = get_current_user(None, db)
     prompt = (payload or {}).get("prompt", "").strip()
     if not prompt:
         raise HTTPException(status_code=422, detail="prompt is required")
 
-    # 1. Analizar prompt
     analysis = prompt_processor.analyze_prompt(prompt)
-    mood     = analysis.get("mood", "neutral")
-    logger.info(f"Prompt analysis: mood={mood}, géneros={analysis.get('genres')}")
+    mood = analysis.get("mood", "neutral")
+    
+    openrouter_key = getattr(settings, 'openrouter_api_key', None)
+    if not openrouter_key:
+        raise HTTPException(status_code=500, detail="OPENROUTER_API_KEY no está configurada")
 
-    # 2. Obtener token de Spotify
     spotify_account = db.query(UserStreamingAccount).filter_by(
         user_id=user.id, platform="spotify"
     ).first()
+    
+    if not spotify_account or not spotify_account.access_token:
+        raise HTTPException(status_code=400, detail="Conecta tu cuenta de Spotify primero")
 
-    tracks: List[Dict] = []
-    total_analyzed = 0
-    source = "internal"
+    token = await _get_spotify_token(db, user)
+    
+    # --- 1. EXTRAER EL GUSTO MUSICAL DEL USUARIO (AMPLIADO A 50 Y CON GÉNEROS) ---
+    favorite_artists_str = "Varios"
+    favorite_genres_str = "Variados"
+    try:
+        # Usamos medium_term (6 meses) y sacamos 50 artistas para tener un panorama gigante
+        top_artists_data = await _spotify_api_request("/me/top/artists?limit=50&time_range=medium_term", token)
+        artists_items = top_artists_data.get("items", [])
+        
+        if artists_items:
+            # Sacamos los nombres
+            artists_names = [a["name"] for a in artists_items]
+            favorite_artists_str = ", ".join(artists_names)
+            
+            # Sacamos todos los géneros de esos artistas
+            all_genres = []
+            for a in artists_items:
+                all_genres.extend(a.get("genres", []))
+            
+            # Obtenemos los 15 géneros más repetidos de tu perfil
+            top_genres = [g for g, c in Counter(all_genres).most_common(15)]
+            if top_genres:
+                favorite_genres_str = ", ".join(top_genres)
+                
+    except Exception as e:
+        logger.warning(f"No se pudieron obtener los artistas top: {e}")
 
-    if spotify_account and spotify_account.access_token:
+    # --- 2. PEDIR A LA IA QUE INVENTE LA PLAYLIST ---
+    system_prompt = (
+        "Eres un curador musical experto. El usuario te dará un prompt (situación o mood).\n"
+        "PERFIL DEL USUARIO:\n"
+        f"- Artistas favoritos: {favorite_artists_str}.\n"
+        f"- Géneros que suele escuchar: {favorite_genres_str}.\n\n"
+        "INSTRUCCIONES ESTRICTAS:\n"
+        "1. Genera EXACTAMENTE 50 canciones reales (pedimos 50 como margen de seguridad).\n"
+        "2. PRIORIDAD MÁXIMA: El mood es la LEY. Si el prompt pide tristeza o calma, ESTÁ PROHIBIDO incluir canciones de fiesta, reguetón de discoteca o ritmos hype.\n"
+        "3. BALANCE: Usa el perfil del usuario como inspiración. Si pide algo triste, busca temas melancólicos de sus artistas, o busca en sus géneros favoritos (ej. Pop latino triste) temas que SÍ encajen. No fuerces perreo donde no va.\n"
+        "4. Devuelve ÚNICAMENTE un arreglo JSON puro con este formato:\n"
+        '[{"title": "Nombre de la cancion", "artist": "Nombre del artista"}]\n'
+        "Cero texto extra."
+    )
+    
+    async with httpx.AsyncClient(timeout=90.0) as client:
         try:
-            token = await _get_spotify_token(db, user)
-            rec = MoodRecommender(token)
-            tracks, total_analyzed = await rec.generate_playlist(mood, playlist_size=25)
-            source = "spotify_liked"
-            logger.info(f"Prompt ({mood}): {len(tracks)} canciones de {total_analyzed} liked songs")
-        except Exception as e:
-            logger.error(f"MoodRecommender falló en prompt: {e}")
-            # Fallback: buscar en Spotify por géneros (comportamiento anterior)
-            try:
-                recommender = HybridRecommender(user.id)
-                tracks = await recommender.generate_playlist_from_spotify(
-                    analysis, spotify_account.access_token, limit=25
-                )
-                source = "spotify_search"
-            except Exception as e2:
-                logger.error(f"Fallback spotify también falló: {e2}")
-                tracks = HybridRecommender(user.id)._fake_tracks(mood)
-    else:
-        tracks = HybridRecommender(user.id)._fake_tracks(mood)
-        logger.warning("Spotify no conectado — usando tracks de respaldo")
+            logger.info(f"Generando 50 canciones (Buffer) adaptadas a 50 artistas y sus géneros...")
+            res = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {openrouter_key}", 
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "minimax/minimax-m2.5:free", 
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt}
+                    ]
+                }
+            )
+            
+            if res.status_code != 200:
+                raise HTTPException(status_code=500, detail="Error en la API de IA")
+                
+            response_data = res.json()
+            if "choices" not in response_data:
+                raise HTTPException(status_code=500, detail="La IA no devolvió el formato esperado")
 
-    # 3. Nombre de playlist
+            content = response_data["choices"][0]["message"]["content"]
+            
+            match = re.search(r'\[.*\]', content, re.DOTALL)
+            if not match:
+                logger.error(f"La IA no devolvió un JSON válido: {content}")
+                raise HTTPException(status_code=500, detail="La IA no formateó bien el JSON.")
+                
+            clean_content = match.group(0)
+            recommended_songs = json.loads(clean_content)
+            logger.info(f"La IA sugirió {len(recommended_songs)} canciones. Buscando en Spotify...")
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error con OpenRouter: {e}")
+            raise HTTPException(status_code=500, detail="Error generando recomendaciones con IA")
+
+    # --- 3. BUSCAR LAS CANCIONES EN SPOTIFY ---
+    playlist_tracks = []
+    
+    for song in recommended_songs:
+        # Paramos si ya llegamos a las 40 perfectas
+        if len(playlist_tracks) >= 40:
+            break
+            
+        try:
+            title = song.get("title", "")
+            artist = song.get("artist", "")
+            
+            query = quote(f"track:{title} artist:{artist}")
+            search_data = await _spotify_api_request(f"/search?q={query}&type=track&limit=1", token)
+            
+            items = search_data.get("tracks", {}).get("items", [])
+            if items:
+                track_data = items[0]
+                # Verificación extra opcional: no meter la misma canción dos veces
+                if not any(t["spotify_id"] == track_data.get("id") for t in playlist_tracks):
+                    playlist_tracks.append({
+                        "spotify_id": track_data.get("id"),
+                        "title": track_data.get("name"),
+                        "artist": ", ".join(a.get("name", "") for a in track_data.get("artists", [])),
+                        "album": track_data.get("album", {}).get("name"),
+                        "image_url": track_data.get("album", {}).get("images", [{}])[0].get("url") if track_data.get("album", {}).get("images") else None,
+                        "uri": track_data.get("uri"),
+                        "external_urls": track_data.get("external_urls", {})
+                    })
+        except Exception as e:
+            logger.warning(f"No se encontró en Spotify: {song.get('title')} - {song.get('artist')}")
+
+    # --- 4. GUARDAR EN BD ---
     playlist_name = MoodRecommender.playlist_name_for_mood(mood, prompt)
 
-    # 4. Guardar en BD
     ai_playlist = AIGeneratedPlaylist(
         user_id=user.id,
         playlist_name=playlist_name,
         generation_method="prompt",
         emotion_detected=mood,
         prompt_used=prompt,
-        tracks=tracks,
-        platform=source,
+        tracks=playlist_tracks, 
+        platform="spotify_ai_hybrid",
     )
     db.add(ai_playlist)
     db.commit()
     db.refresh(ai_playlist)
-
-    logger.info(f"Playlist '{playlist_name}' guardada con ID: {ai_playlist.id} ({len(tracks)} tracks, source={source})")
 
     return {
         "success": True,
         "playlist_id": ai_playlist.id,
         "playlist_name": playlist_name,
         "analysis": analysis,
-        "tracks_count": len(tracks),
-        "total_liked_analyzed": total_analyzed,
-        "source": source,
-        "playlist": tracks,
+        "tracks_count": len(playlist_tracks),
+        "source": "spotify_ai_hybrid",
+        "playlist": playlist_tracks,
     }
 
 
@@ -852,9 +944,9 @@ def get_generated_playlist_detail(playlist_id: int, db: Session = Depends(get_db
     }
 
 
-@app.delete("/api/playlists/generated/{playlist_id}")
-def delete_generated_playlist(playlist_id: int, db: Session = Depends(get_db)):
-    """Eliminar una playlist generada"""
+@app.get("/api/playlists/generated/{playlist_id}")
+def get_generated_playlist_detail(playlist_id: int, db: Session = Depends(get_db)):
+    """Obtener detalles completos de una playlist generada"""
     user = get_current_user(None, db)
     playlist = db.query(AIGeneratedPlaylist).filter_by(
         id=playlist_id,
@@ -864,10 +956,50 @@ def delete_generated_playlist(playlist_id: int, db: Session = Depends(get_db)):
     if not playlist:
         raise HTTPException(status_code=404, detail="Playlist no encontrada")
     
+    # --- PARCHE DE SEGURIDAD PARA FLUTTER ---
+    # Extraemos la lista sin importar cómo se haya guardado en SQLite
+    tracks_list = []
+    if isinstance(playlist.tracks, list):
+        tracks_list = playlist.tracks
+    elif isinstance(playlist.tracks, dict):
+        tracks_list = playlist.tracks.get("items", [])
+    
+    return {
+        "success": True,
+        "playlist": {
+            "id": playlist.id,
+            "name": playlist.playlist_name,
+            "generation_method": playlist.generation_method,
+            "emotion": playlist.emotion_detected,
+            "prompt": playlist.prompt_used,
+            "tracks": tracks_list,  # <-- Flutter ahora SIEMPRE recibirá una lista feliz
+            "platform": playlist.platform,
+            "created_at": playlist.created_at.isoformat() if playlist.created_at else None
+        }
+    }
+
+@app.delete("/api/playlists/generated/{playlist_id}")
+def delete_generated_playlist(playlist_id: int, db: Session = Depends(get_db)):
+    """Eliminar una playlist generada con IA"""
+    from fastapi import HTTPException
+    
+    # 1. Obtener al usuario actual por seguridad
+    user = get_current_user(None, db)
+    
+    # 2. Buscar la playlist asegurando que le pertenezca al usuario
+    playlist = db.query(AIGeneratedPlaylist).filter_by(
+        id=playlist_id,
+        user_id=user.id
+    ).first()
+    
+    if not playlist:
+        raise HTTPException(status_code=404, detail="Playlist no encontrada")
+    
+    # 3. Eliminar de la base de datos
     db.delete(playlist)
     db.commit()
     
-    return {"success": True, "message": "Playlist eliminada"}
+    return {"success": True, "message": "Playlist eliminada correctamente"}
 
 # ============================================================================
 # ENDPOINTS DE DEEZER Y APPLE MUSIC (deshabilitados para versiones futuras)

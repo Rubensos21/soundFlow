@@ -270,6 +270,13 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
     final int tracksCount = playlist['tracks_count'] ?? 0;
     final int playlistId = playlist['id'] ?? 0;
     
+    // Intentamos extraer la imagen de la primera canción si el backend la envía.
+    // (A veces viene directo como 'image_url' en el resumen, o dentro del arreglo 'tracks')
+    String? coverImageUrl = playlist['image_url'];
+    if (coverImageUrl == null && playlist['tracks'] != null && (playlist['tracks'] as List).isNotEmpty) {
+      coverImageUrl = playlist['tracks'][0]['image_url'];
+    }
+    
     // Colores basados en emoción
     final emotionColors = {
       'happy': const Color(0xFFFFC107),
@@ -297,39 +304,54 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
       child: Container(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              color.withOpacity(0.3),
-              color.withOpacity(0.1),
-            ],
-          ),
-          border: Border.all(
-            color: color.withOpacity(0.3),
-            width: 1,
-          ),
+          // Si no hay imagen, usamos un color oscuro de fondo por defecto
+          color: const Color(0xFF2A2045),
+          image: coverImageUrl != null
+              ? DecorationImage(
+                  image: NetworkImage(coverImageUrl),
+                  fit: BoxFit.cover,
+                )
+              : null,
+          // Solo mostramos borde si NO hay imagen de fondo
+          border: coverImageUrl == null ? Border.all(color: color.withOpacity(0.3), width: 1) : null,
         ),
-        child: Padding(
+        child: Container(
+          // CAPA MÁGICA: Degradado oscuro encima de la imagen para proteger la lectura del texto
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.transparent, // Arriba deja ver la imagen
+                const Color(0xFF191428).withOpacity(0.7),
+                const Color(0xFF191428).withOpacity(0.95), // Abajo oscurece
+              ],
+              stops: const [0.0, 0.5, 1.0],
+            ),
+          ),
           padding: const EdgeInsets.all(16.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Icono de emoción
-              Container(
-                width: 50,
-                height: 50,
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.2),
-                  shape: BoxShape.circle,
+              // Si no hay imagen de fondo, seguimos mostrando el icono de la emoción arriba
+              if (coverImageUrl == null)
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.2),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    _getEmotionIcon(emotion),
+                    color: color,
+                    size: 24,
+                  ),
                 ),
-                child: Icon(
-                  _getEmotionIcon(emotion),
-                  color: color,
-                  size: 28,
-                ),
-              ),
-              const Spacer(),
+                
+              const Spacer(), // Empuja los textos hacia abajo
+              
               // Nombre de la playlist
               Text(
                 name,
@@ -343,7 +365,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                 ),
               ),
               const SizedBox(height: 4),
-              // Info
+              // Info de cantidad de canciones
               Text(
                 '$tracksCount canciones',
                 style: TextStyle(
@@ -352,11 +374,12 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                   fontFamily: 'Poppins',
                 ),
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 8),
+              // Etiqueta (Pill) del Mood
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.2),
+                  color: color.withOpacity(0.3),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
@@ -364,7 +387,7 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
                   style: TextStyle(
                     color: color,
                     fontSize: 10,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
                     fontFamily: 'Poppins',
                   ),
                 ),

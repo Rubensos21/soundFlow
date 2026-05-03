@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'services/api_client.dart';
 import 'utils/share_helper.dart';
 
@@ -45,34 +45,79 @@ class _GeneratedPlaylistDetailScreenState extends State<GeneratedPlaylistDetailS
     }
   }
 
+  // --- FUNCIONES DE BOTONES ---
+
+  Future<void> _openInSpotify(String? uri) async {
+    if (uri != null && uri.isNotEmpty) {
+      final Uri spotifyUri = Uri.parse(uri);
+      if (await canLaunchUrl(spotifyUri)) {
+        await launchUrl(spotifyUri, mode: LaunchMode.externalApplication);
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No se pudo abrir Spotify. Verifica que esté instalado.')),
+          );
+        }
+      }
+    }
+  }
+
+  void _savePlaylistToSpotify() {
+    // Aquí irá tu lógica futura para mandar un POST al backend y crear la playlist
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Guardando en tu cuenta de Spotify...')),
+    );
+  }
+
+  Future<void> _deletePlaylist() async {
+    try {
+      final api = ApiClient();
+      // Asegúrate de tener este método en tu ApiClient: 
+      await api.deleteGeneratedPlaylist(widget.playlistId);
+      
+      if (mounted) {
+        Navigator.pop(context, true); // Regresamos y avisamos que se borró
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al eliminar: $e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    // 1. Pantalla de carga
     if (_isLoading) {
-      return Scaffold(
-        backgroundColor: const Color(0xFF2D1B69),
-        body: const Center(
-          child: CircularProgressIndicator(color: Color(0xFF9C7CFE)),
+      return const Scaffold(
+        backgroundColor: Color(0xFF191428), // Fondo oscuro estilo dark mode
+        body: Center(
+          child: CircularProgressIndicator(color: Color(0xFF1DB954)), // Verde Spotify
         ),
       );
     }
 
+    // 2. Pantalla de error
     if (_errorMessage != null || _playlist == null) {
       return Scaffold(
-        backgroundColor: const Color(0xFF2D1B69),
+        backgroundColor: const Color(0xFF191428),
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               const Icon(Icons.error_outline, size: 64, color: Colors.redAccent),
               const SizedBox(height: 16),
-              Text(
+              const Text(
                 'Error cargando playlist',
-                style: const TextStyle(color: Colors.white, fontFamily: 'Poppins'),
+                style: TextStyle(color: Colors.white, fontFamily: 'Poppins'),
               ),
               const SizedBox(height: 16),
               ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1DB954)),
                 onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Volver'),
+                child: const Text('Volver', style: TextStyle(color: Colors.white)),
               ),
             ],
           ),
@@ -80,356 +125,250 @@ class _GeneratedPlaylistDetailScreenState extends State<GeneratedPlaylistDetailS
       );
     }
 
+    // 3. Extraer datos
     final name = _playlist!['name'] ?? 'Sin nombre';
     final emotion = _playlist!['emotion'] ?? 'neutral';
     final prompt = _playlist!['prompt'] ?? '';
     final tracks = List<Map<String, dynamic>>.from(_playlist!['tracks'] ?? []);
     
-    // Colores basados en emoción
-    final emotionColors = {
-      'happy': const Color(0xFFFFC107),
-      'sad': const Color(0xFF5C6BC0),
-      'angry': const Color(0xFFE53935),
-      'calm': const Color(0xFF66BB6A),
-      'romantic': const Color(0xFFEC407A),
-      'energetic': const Color(0xFFFF5722),
-      'neutral': const Color(0xFF9C7CFE),
-    };
-    
-    final color = emotionColors[emotion] ?? const Color(0xFF9C7CFE);
+    // Usar la portada de la primera canción como fondo gigante
+    String coverImageUrl = 'https://via.placeholder.com/400';
+    if (tracks.isNotEmpty && tracks[0]['image_url'] != null) {
+      coverImageUrl = tracks[0]['image_url'];
+    }
 
     return Scaffold(
-      backgroundColor: const Color(0xFF2D1B69),
-      body: SafeArea(
-        child: Column(
-          children: [
-            // Header
-            _buildHeader(name, prompt, emotion, color, tracks.length),
-            
-            // Lista de canciones
-            Expanded(
-              child: tracks.isEmpty
-                  ? _buildEmptyTracks()
-                  : _buildTracksList(tracks, color),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHeader(String name, String prompt, String emotion, Color color, int tracksCount) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            color.withOpacity(0.3),
-            const Color(0xFF2D1B69),
-          ],
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Botones de acción
-          Row(
-            children: [
+      backgroundColor: const Color(0xFF191428),
+      body: CustomScrollView(
+        slivers: [
+          // --- HEADER CON IMAGEN EXPANDIBLE ---
+          SliverAppBar(
+            expandedHeight: 340.0,
+            pinned: true,
+            backgroundColor: const Color(0xFF191428),
+            elevation: 0,
+            iconTheme: const IconThemeData(color: Colors.white),
+            actions: [
               IconButton(
-                onPressed: () => Navigator.of(context).pop(),
-                icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white),
-              ),
-              const Spacer(),
-              IconButton(
+                icon: const Icon(Icons.more_vert),
                 onPressed: () {
-                  ShareHelper.shareText('Escucha mi playlist "$name" creada con IA en Sound Flow');
+                  // Menú inferior para eliminar
+                  showModalBottomSheet(
+                    context: context,
+                    backgroundColor: const Color(0xFF2A2045),
+                    shape: const RoundedRectangleBorder(
+                      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                    ),
+                    builder: (context) => Wrap(
+                      children: [
+                        ListTile(
+                          leading: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                          title: const Text('Eliminar Playlist', style: TextStyle(color: Colors.redAccent, fontFamily: 'Poppins')),
+                          onTap: () {
+                            Navigator.pop(context);
+                            _deletePlaylist();
+                          },
+                        ),
+                      ],
+                    ),
+                  );
                 },
-                icon: const Icon(Icons.share, color: Colors.white),
-              ),
-              IconButton(
-                onPressed: () {
-                  // Más opciones
-                },
-                icon: const Icon(Icons.more_vert, color: Colors.white),
               ),
             ],
-          ),
-          
-          const SizedBox(height: 16),
-          
-          // Icono grande de emoción
-          Container(
-            width: 120,
-            height: 120,
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.2),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              _getEmotionIcon(emotion),
-              color: color,
-              size: 60,
-            ),
-          ),
-          
-          const SizedBox(height: 20),
-          
-          // Nombre de la playlist
-          Text(
-            name,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 28,
-              fontWeight: FontWeight.w800,
-              fontFamily: 'Poppins',
-            ),
-          ),
-          
-          const SizedBox(height: 8),
-          
-          // Prompt usado
-          if (prompt.isNotEmpty)
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.05),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
+            flexibleSpace: FlexibleSpaceBar(
+              background: Stack(
+                fit: StackFit.expand,
                 children: [
-                  Icon(Icons.lightbulb_outline, color: color, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '"$prompt"',
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(0.9),
-                        fontSize: 13,
-                        fontStyle: FontStyle.italic,
-                        fontFamily: 'Poppins',
+                  Image.network(
+                    coverImageUrl,
+                    fit: BoxFit.cover,
+                  ),
+                  // Degradado negro/morado oscuro sobre la imagen
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.transparent,
+                          const Color(0xFF191428).withOpacity(0.6),
+                          const Color(0xFF191428),
+                        ],
+                        stops: const [0.0, 0.7, 1.0],
                       ),
                     ),
                   ),
                 ],
               ),
             ),
-          
-          const SizedBox(height: 12),
-          
-          // Info
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  emotion.toUpperCase(),
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    fontFamily: 'Poppins',
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                '$tracksCount canciones',
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.7),
-                  fontSize: 14,
-                  fontFamily: 'Poppins',
-                ),
-              ),
-              const Spacer(),
-              Container(
-                width: 50,
-                height: 50,
-                decoration: BoxDecoration(
-                  color: color,
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.play_arrow, color: Colors.white, size: 32),
-              ),
-            ],
           ),
+
+          // --- INFO PRINCIPAL Y BOTONES ---
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 32,
+                      fontWeight: FontWeight.w800,
+                      fontFamily: 'Poppins',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  RichText(
+                    text: TextSpan(
+                      style: const TextStyle(color: Colors.white70, fontSize: 15, fontFamily: 'Poppins'),
+                      children: [
+                        const TextSpan(text: 'Creada por '),
+                        TextSpan(
+                          text: 'Yael', 
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontStyle: FontStyle.italic, color: Colors.white),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Mood: ${emotion.toUpperCase()}',
+                    style: const TextStyle(color: Colors.white54, fontSize: 14, fontFamily: 'Poppins'),
+                  ),
+                  if (prompt.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Prompt: "$prompt"',
+                      style: const TextStyle(color: Colors.white54, fontSize: 12, fontStyle: FontStyle.italic, fontFamily: 'Poppins'),
+                    ),
+                  ],
+                  const SizedBox(height: 24),
+
+                  // Fila de botones circulares y botón Play
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          _buildCircleButton(Icons.search, () {
+                            // Acción de buscar (opcional)
+                          }),
+                          const SizedBox(width: 12),
+                          _buildCircleButton(Icons.share_outlined, () {
+                            ShareHelper.shareText('Escucha mi playlist "$name" creada en SoundFlow');
+                          }),
+                          const SizedBox(width: 12),
+                          _buildCircleButton(Icons.playlist_add, _savePlaylistToSpotify),
+                        ],
+                      ),
+                      FloatingActionButton(
+                        backgroundColor: const Color(0xFF1DB954), // Spotify Green
+                        elevation: 0,
+                        onPressed: () {
+                          if (tracks.isNotEmpty) {
+                            _openInSpotify(tracks[0]['uri']);
+                          }
+                        },
+                        child: const Icon(Icons.play_arrow, color: Colors.white, size: 36),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                ],
+              ),
+            ),
+          ),
+
+          // --- LISTA DE CANCIONES (SIN NÚMEROS) ---
+          tracks.isEmpty 
+          ? SliverToBoxAdapter(child: _buildEmptyTracks())
+          : SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  final track = tracks[index];
+                  return ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                    leading: ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: Image.network(
+                        track['image_url'] ?? 'https://via.placeholder.com/50',
+                        width: 50,
+                        height: 50,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                    title: Text(
+                      track['title'] ?? 'Desconocido',
+                      style: const TextStyle(
+                        color: Colors.white, 
+                        fontWeight: FontWeight.w600,
+                        fontFamily: 'Poppins',
+                        fontSize: 15,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      track['artist'] ?? 'Artista',
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontFamily: 'Poppins',
+                        fontSize: 13,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.more_vert, color: Colors.white54),
+                      onPressed: () {
+                        // Opciones de la canción (podrías abrir un BottomSheet aquí)
+                        _openInSpotify(track['uri']);
+                      },
+                    ),
+                    onTap: () => _openInSpotify(track['uri']),
+                  );
+                },
+                childCount: tracks.length,
+              ),
+            ),
+            
+          const SliverToBoxAdapter(child: SizedBox(height: 100)), // Espacio al final
         ],
       ),
     );
   }
 
-  Widget _buildTracksList(List<Map<String, dynamic>> tracks, Color accentColor) {
-    return ListView.builder(
-      padding: const EdgeInsets.all(20),
-      itemCount: tracks.length,
-      itemBuilder: (context, index) {
-        final track = tracks[index];
-        return _buildTrackItem(track, index + 1, accentColor);
-      },
-    );
-  }
-
-  Widget _buildTrackItem(Map<String, dynamic> track, int index, Color accentColor) {
-    final title = track['title'] ?? 'Sin título';
-    final artist = track['artist'] ?? 'Artista desconocido';
-    final album = track['album'] ?? '';
-    final imageUrl = track['image_url'];
-    final duration = track['duration_ms'] ?? 0;
-    
-    // Convertir duración a formato mm:ss
-    final minutes = (duration / 60000).floor();
-    final seconds = ((duration % 60000) / 1000).floor();
-    final durationStr = '${minutes.toString()}:${seconds.toString().padLeft(2, '0')}';
-
+  // Widget auxiliar para los botones circulares translúcidos
+  Widget _buildCircleButton(IconData icon, VoidCallback onPressed) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.03),
-        borderRadius: BorderRadius.circular(12),
+        color: Colors.white.withOpacity(0.08),
+        shape: BoxShape.circle,
       ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        leading: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Número
-            SizedBox(
-              width: 30,
-              child: Text(
-                '$index',
-                style: TextStyle(
-                  color: accentColor,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
-                  fontFamily: 'Poppins',
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ),
-            const SizedBox(width: 8),
-            // Portada
-            Container(
-              width: 50,
-              height: 50,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                color: Colors.white.withOpacity(0.1),
-              ),
-              child: imageUrl != null
-                  ? ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.network(
-                        imageUrl,
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) =>
-                            Icon(Icons.music_note, color: accentColor),
-                      ),
-                    )
-                  : Icon(Icons.music_note, color: accentColor),
-            ),
-          ],
-        ),
-        title: Text(
-          title,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 15,
-            fontWeight: FontWeight.w600,
-            fontFamily: 'Poppins',
-          ),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              artist,
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.6),
-                fontSize: 13,
-                fontFamily: 'Poppins',
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            if (album.isNotEmpty)
-              Text(
-                album,
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.4),
-                  fontSize: 11,
-                  fontFamily: 'Poppins',
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-          ],
-        ),
-        trailing: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              durationStr,
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.5),
-                fontSize: 12,
-                fontFamily: 'Poppins',
-              ),
-            ),
-            const SizedBox(height: 4),
-            Icon(Icons.more_horiz, color: Colors.white.withOpacity(0.5), size: 20),
-          ],
-        ),
+      child: IconButton(
+        icon: Icon(icon, color: Colors.white, size: 22),
+        onPressed: onPressed,
       ),
     );
   }
 
   Widget _buildEmptyTracks() {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.music_off,
-            size: 64,
-            color: Colors.white.withOpacity(0.3),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'No hay canciones en esta playlist',
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.7),
-              fontFamily: 'Poppins',
+      child: Padding(
+        padding: const EdgeInsets.only(top: 40.0),
+        child: Column(
+          children: [
+            Icon(Icons.music_off, size: 48, color: Colors.white.withOpacity(0.3)),
+            const SizedBox(height: 16),
+            Text(
+              'No hay canciones en esta playlist',
+              style: TextStyle(color: Colors.white.withOpacity(0.5), fontFamily: 'Poppins'),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
-
-  IconData _getEmotionIcon(String emotion) {
-    switch (emotion) {
-      case 'happy':
-        return Icons.sentiment_very_satisfied;
-      case 'sad':
-        return Icons.sentiment_dissatisfied;
-      case 'angry':
-        return Icons.whatshot;
-      case 'calm':
-        return Icons.spa;
-      case 'romantic':
-        return Icons.favorite;
-      case 'energetic':
-        return Icons.bolt;
-      default:
-        return Icons.music_note;
-    }
-  }
 }
-

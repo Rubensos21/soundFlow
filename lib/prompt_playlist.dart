@@ -12,266 +12,310 @@ class PromptPlaylistScreen extends StatefulWidget {
 }
 
 class _PromptPlaylistScreenState extends State<PromptPlaylistScreen> {
+  static const _kAccent  = Color(0xFF9C7CFE);
+  static const _kBg      = Color(0xFF2D1B69);
+  static const _kSurface = Color(0xFF3D2A85);
+
   final TextEditingController _controller = TextEditingController();
+  final FocusNode _focusNode = FocusNode();
   bool _loading = false;
+  bool _isFocused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode.addListener(() => setState(() => _isFocused = _focusNode.hasFocus));
+  }
 
   @override
   void dispose() {
     _controller.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
   void _onSelectSuggestion(String text) {
-    setState(() {
-      _controller.text = text;
-    });
+    setState(() => _controller.text = text);
+    _focusNode.unfocus();
   }
 
   void _onGenerate() {
     final prompt = _controller.text.trim();
     if (prompt.isEmpty) return;
+    _focusNode.unfocus();
     _generatePrompt(prompt);
   }
 
   Future<void> _generatePrompt(String prompt) async {
     setState(() => _loading = true);
     try {
-      final api = ApiClient();
-      final resp = await api.generatePlaylistFromPrompt(prompt);
-      
-      final playlistId = resp['playlist_id'] as int?;
+      final resp = await ApiClient().generatePlaylistFromPrompt(prompt);
+      final playlistId   = resp['playlist_id'] as int?;
       final playlistName = resp['playlist_name']?.toString() ?? 'Playlist generada';
-      final tracksCount = resp['tracks_count'] as int? ?? 0;
-      
+      final tracksCount  = resp['tracks_count'] as int? ?? 0;
+
       if (!mounted) return;
-      
       setState(() => _loading = false);
-      
-      // Mostrar diálogo de éxito
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          backgroundColor: const Color(0xFF3D2A6D),
-          title: const Row(
-            children: [
-              Icon(Icons.check_circle, color: Color(0xFF66BB6A), size: 28),
-              SizedBox(width: 12),
-              Text(
-                '¡Playlist Creada!',
-                style: TextStyle(color: Colors.white, fontFamily: 'Poppins'),
-              ),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                playlistName,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  fontFamily: 'Poppins',
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Se generaron $tracksCount canciones basadas en tu prompt',
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.8),
-                  fontFamily: 'Poppins',
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                '✨ La playlist se guardó en tus Favoritos',
-                style: TextStyle(
-                  color: const Color(0xFF66BB6A),
-                  fontSize: 13,
-                  fontFamily: 'Poppins',
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                Navigator.of(context).pop(); // Volver al home
-              },
-              child: const Text(
-                'Cerrar',
-                style: TextStyle(color: Colors.white70, fontFamily: 'Poppins'),
-              ),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                if (playlistId != null) {
-                  // Navegar a la pantalla de detalles
-                  Navigator.of(context).pushReplacement(
-                    MaterialPageRoute(
-                      builder: (_) => GeneratedPlaylistDetailScreen(playlistId: playlistId),
-                    ),
-                  );
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF9C7CFE),
-              ),
-              child: const Text(
-                'Ver Playlist',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontFamily: 'Poppins',
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
+
+      _showSuccessDialog(playlistId, playlistName, tracksCount);
     } catch (e) {
       if (!mounted) return;
       setState(() => _loading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Error generando playlist: $e'),
-          backgroundColor: Colors.red,
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
       );
     }
   }
 
+  void _showSuccessDialog(int? playlistId, String playlistName, int tracksCount) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: _kSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Row(
+          children: [
+            Icon(Icons.check_circle_rounded, color: Color(0xFF66BB6A), size: 26),
+            SizedBox(width: 10),
+            Text('¡Playlist Creada!',
+                style: TextStyle(color: Colors.white, fontFamily: 'Poppins', fontSize: 18)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(playlistName,
+                style: const TextStyle(color: Colors.white, fontSize: 16,
+                    fontWeight: FontWeight.w600, fontFamily: 'Poppins')),
+            const SizedBox(height: 6),
+            Text('Se generaron $tracksCount canciones basadas en tu prompt',
+                style: TextStyle(color: Colors.white.withOpacity(0.7), fontFamily: 'Poppins', fontSize: 13)),
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFF66BB6A).withOpacity(0.12),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFF66BB6A).withOpacity(0.3)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.bookmark_rounded, color: Color(0xFF66BB6A), size: 16),
+                  SizedBox(width: 6),
+                  Text('Guardada en tus Favoritos',
+                      style: TextStyle(color: Color(0xFF66BB6A), fontSize: 12,
+                          fontFamily: 'Poppins', fontWeight: FontWeight.w500)),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () { Navigator.of(context).pop(); Navigator.of(context).pop(); },
+            child: Text('Cerrar',
+                style: TextStyle(color: Colors.white.withOpacity(0.5), fontFamily: 'Poppins')),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              if (playlistId != null) {
+                Navigator.of(context).pushReplacement(MaterialPageRoute(
+                    builder: (_) => GeneratedPlaylistDetailScreen(playlistId: playlistId)));
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _kAccent,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              elevation: 0,
+            ),
+            child: const Text('Ver Playlist',
+                style: TextStyle(color: Colors.white, fontFamily: 'Poppins',
+                    fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF2D1B69),
+      backgroundColor: _kBg,
       body: SafeArea(
-        child: Stack(
+        child: Column(
           children: [
-            // Contenido
-            Positioned.fill(
+            // ── Header ──────────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 8, 0),
+              child: Row(
+                children: [
+                  // Ícono decorativo
+                  Container(
+                    width: 40, height: 40,
+                    decoration: BoxDecoration(
+                      color: _kAccent.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.auto_awesome_rounded,
+                        color: _kAccent, size: 22),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Crear playlist',
+                            style: TextStyle(color: Colors.white, fontSize: 20,
+                                fontWeight: FontWeight.bold, fontFamily: 'Poppins')),
+                        Text('Describe lo que quieres escuchar',
+                            style: TextStyle(color: Colors.white54, fontSize: 12,
+                                fontFamily: 'Poppins')),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, color: Colors.white54, size: 24),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 24),
+
+            Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+                padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Crea una playlist con palabras',
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.white,
-                        fontFamily: 'Poppins',
-                        height: 1.25,
+                    // ── Campo de texto ───────────────────────────────────
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      decoration: BoxDecoration(
+                        color: _kSurface,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: _isFocused
+                              ? _kAccent.withOpacity(0.7)
+                              : Colors.white.withOpacity(0.08),
+                          width: _isFocused ? 1.5 : 1,
+                        ),
+                        boxShadow: _isFocused
+                            ? [BoxShadow(
+                                color: _kAccent.withOpacity(0.15),
+                                blurRadius: 16,
+                                offset: const Offset(0, 4))]
+                            : null,
+                      ),
+                      padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.edit_note_rounded,
+                                  color: _isFocused ? _kAccent : Colors.white38,
+                                  size: 18),
+                              const SizedBox(width: 6),
+                              Text('Tu idea',
+                                  style: TextStyle(
+                                    color: _isFocused ? _kAccent : Colors.white38,
+                                    fontFamily: 'Poppins',
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    letterSpacing: 0.5,
+                                  )),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: _controller,
+                            focusNode: _focusNode,
+                            maxLines: 3,
+                            style: const TextStyle(
+                                color: Colors.white, fontFamily: 'Poppins', fontSize: 15),
+                            decoration: InputDecoration(
+                              hintText: 'Ej: canciones para un road trip nocturno...',
+                              hintStyle: TextStyle(
+                                  color: Colors.white.withOpacity(0.25),
+                                  fontFamily: 'Poppins',
+                                  fontSize: 14),
+                              border: InputBorder.none,
+                              isDense: true,
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Escribe tu idea o escoge una de nuestras sugerencias',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        color: Colors.white70,
-                        fontFamily: 'Poppins',
-                      ),
-                    ),
+
                     const SizedBox(height: 16),
 
-                    // Campo de texto
-                    Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFB7A8E9).withOpacity(0.35),
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      child: TextField(
-                        controller: _controller,
-                        maxLines: 3,
-                        style: const TextStyle(color: Colors.white, fontFamily: 'Poppins'),
-                        decoration: const InputDecoration(
-                          hintText: 'Ingresa tu idea',
-                          hintStyle: TextStyle(color: Color(0xFFE5E1F6), fontFamily: 'Poppins'),
-                          border: InputBorder.none,
-                          isDense: true,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-
-                    // Botón generar
+                    // ── Botón generar ────────────────────────────────────
                     SizedBox(
                       width: double.infinity,
-                      height: 44,
+                      height: 52,
                       child: ElevatedButton(
                         onPressed: _loading ? null : _onGenerate,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF7E61FB),
+                          backgroundColor: _kAccent,
+                          disabledBackgroundColor: _kAccent.withOpacity(0.4),
                           foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, fontFamily: 'Poppins'),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16)),
+                          elevation: 0,
+                          shadowColor: _kAccent.withOpacity(0.4),
                         ),
-                        child: _loading ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text('Generar'),
+                        child: _loading
+                            ? const SizedBox(
+                                width: 22, height: 22,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2.5, color: Colors.white))
+                            : const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.auto_awesome_rounded, size: 18),
+                                  SizedBox(width: 8),
+                                  Text('Generar playlist',
+                                      style: TextStyle(fontSize: 16,
+                                          fontWeight: FontWeight.w700,
+                                          fontFamily: 'Poppins')),
+                                ],
+                              ),
                       ),
                     ),
 
-                    const SizedBox(height: 20),
-                    Divider(color: Colors.white.withOpacity(0.25), thickness: 1),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 32),
 
-                    const Text(
-                      'Sugerencias',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                        fontFamily: 'Poppins',
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
+                    // ── Sugerencias ──────────────────────────────────────
                     Row(
                       children: [
-                        Expanded(
-                          child: _SuggestionCard(
-                            title: 'Focus',
-                            description: 'Genera un mix de\nlo-fi para estudiar',
-                            onTap: () => _onSelectSuggestion('Focus - lo-fi para estudiar'),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _SuggestionCard(
-                            title: 'Amor',
-                            description: 'Crea un mix de\nde amor R&B',
-                            onTap: () => _onSelectSuggestion('Amor - R&B romántico'),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _SuggestionCard(
-                            title: 'Sad',
-                            description: 'Pon junto classic rock\ny Pop sobre tristeza',
-                            onTap: () => _onSelectSuggestion('Sad - mood triste'),
-                          ),
-                        ),
+                        const Icon(Icons.lightbulb_outline_rounded,
+                            color: Colors.white38, size: 16),
+                        const SizedBox(width: 6),
+                        const Text('Sugerencias',
+                            style: TextStyle(fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                                fontFamily: 'Poppins')),
                       ],
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 14),
+
+                    // Sugerencias en grid 2x2 + 1
+                    _buildSuggestions(),
+
+                    const SizedBox(height: 32),
                   ],
                 ),
-              ),
-            ),
-            // Botón cerrar (X) por encima del contenido
-            Positioned(
-              right: 12,
-              top: 6,
-              child: IconButton(
-                icon: const Icon(Icons.close_rounded, color: Colors.white, size: 26),
-                onPressed: () => Navigator.of(context).pop(),
               ),
             ),
           ],
@@ -279,75 +323,142 @@ class _PromptPlaylistScreenState extends State<PromptPlaylistScreen> {
       ),
       bottomNavigationBar: AppBottomNavBar(
         currentIndex: 2,
-        onTap: (i) {
-          Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => HomeScreen(initialIndex: i)),
-          );
-        },
+        onTap: (i) => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => HomeScreen(initialIndex: i)),
+        ),
       ),
+    );
+  }
+
+  Widget _buildSuggestions() {
+    final suggestions = [
+      _SuggestionData(
+        emoji: '🎯',
+        title: 'Focus',
+        description: 'Lo-fi para estudiar o concentrarse',
+        prompt: 'Canciones lo-fi instrumentales para concentrarme y estudiar',
+        color: const Color(0xFF45B7D1),
+      ),
+      _SuggestionData(
+        emoji: '💜',
+        title: 'Amor',
+        description: 'R&B y pop romántico',
+        prompt: 'Canciones de amor en R&B y pop para una cita romántica',
+        color: const Color(0xFFFF6B9D),
+      ),
+      _SuggestionData(
+        emoji: '🌙',
+        title: 'Sad',
+        description: 'Para esos momentos melancólicos',
+        prompt: 'Canciones tristes melancólicas de indie y pop para llorar',
+        color: const Color(0xFF7986CB),
+      ),
+      _SuggestionData(
+        emoji: '⚡',
+        title: 'Energía',
+        description: 'Trap y reggaeton para el gym',
+        prompt: 'Canciones energéticas de trap y reggaeton para entrenar',
+        color: const Color(0xFFFF7043),
+      ),
+      _SuggestionData(
+        emoji: '🌅',
+        title: 'Mañana',
+        description: 'Acústico para empezar el día',
+        prompt: 'Canciones acústicas tranquilas para empezar la mañana con energía',
+        color: const Color(0xFFFFB74D),
+      ),
+    ];
+
+    return Column(
+      children: [
+        // Fila de 3
+        Row(
+          children: suggestions.take(3).map((s) => Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(right: s == suggestions[2] ? 0 : 10),
+              child: _SuggestionCard(
+                data: s,
+                onTap: () => _onSelectSuggestion(s.prompt),
+              ),
+            ),
+          )).toList(),
+        ),
+        const SizedBox(height: 10),
+        // Fila de 2
+        Row(
+          children: suggestions.skip(3).map((s) => Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(right: s == suggestions[4] ? 0 : 10),
+              child: _SuggestionCard(
+                data: s,
+                onTap: () => _onSelectSuggestion(s.prompt),
+              ),
+            ),
+          )).toList(),
+        ),
+      ],
     );
   }
 }
 
-class _SuggestionCard extends StatelessWidget {
+// ── Suggestion Data ──────────────────────────────────────────────────────────
+class _SuggestionData {
+  final String emoji;
   final String title;
   final String description;
+  final String prompt;
+  final Color color;
+
+  const _SuggestionData({
+    required this.emoji,
+    required this.title,
+    required this.description,
+    required this.prompt,
+    required this.color,
+  });
+}
+
+// ── Suggestion Card ──────────────────────────────────────────────────────────
+class _SuggestionCard extends StatelessWidget {
+  final _SuggestionData data;
   final VoidCallback? onTap;
 
-  const _SuggestionCard({required this.title, required this.description, this.onTap});
+  const _SuggestionCard({required this.data, this.onTap});
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-      height: 116,
-      decoration: BoxDecoration(
-        color: const Color(0xFFB7A8E9).withOpacity(0.35),
-        borderRadius: BorderRadius.circular(16),
+        padding: const EdgeInsets.fromLTRB(12, 14, 12, 14),
+        decoration: BoxDecoration(
+          color: data.color.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: data.color.withOpacity(0.3)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(data.emoji, style: const TextStyle(fontSize: 22)),
+            const SizedBox(height: 8),
+            Text(data.title,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    fontFamily: 'Poppins')),
+            const SizedBox(height: 3),
+            Text(data.description,
+                style: TextStyle(
+                    color: Colors.white.withOpacity(0.5),
+                    fontSize: 11,
+                    fontFamily: 'Poppins',
+                    height: 1.3),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis),
+          ],
+        ),
       ),
-      padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 15,
-              fontWeight: FontWeight.w800,
-              fontFamily: 'Poppins',
-            ),
-          ),
-          const SizedBox(height: 6),
-          Expanded(
-            child: Text(
-              description,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 11.5,
-                height: 1.25,
-                fontFamily: 'Poppins',
-              ),
-            ),
-          ),
-          Align(
-            alignment: Alignment.bottomRight,
-            child: Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.12),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 18),
-            ),
-          )
-        ],
-      ),
-    ),
     );
   }
 }
-
-
