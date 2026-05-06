@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'services/api_client.dart';
 import 'generated_playlist_detail.dart';
+import 'windows_camera_screen.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MODELO DE EMOCIÓN
@@ -88,11 +90,24 @@ class _FacialScanScreenState extends State<FacialScanScreen>
 
   // ── LANZAR CÁMARA / GALERÍA ─────────────────────────────────────────────
   Future<void> _pickAndScan(ImageSource source) async {
-    final xfile = await ImagePicker().pickImage(source: source, imageQuality: 80);
+    XFile? xfile;
+    
+    if (Platform.isWindows && source == ImageSource.camera) {
+      final imagePath = await Navigator.of(context).push<String>(
+        MaterialPageRoute(builder: (_) => const WindowsCameraScreen()),
+      );
+      
+      if (imagePath == null || !mounted) return;
+      
+      xfile = XFile(imagePath);
+    } else {
+      xfile = await ImagePicker().pickImage(source: source, imageQuality: 80);
+    }
+    
     if (xfile == null || !mounted) return;
 
     setState(() {
-      _imagePath    = xfile.path;
+      _imagePath    = xfile!.path;
       _state        = 'scanning';
       _scanProgress = 0;
       _rawEmotion   = null;

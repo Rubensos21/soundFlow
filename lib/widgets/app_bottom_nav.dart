@@ -24,7 +24,7 @@ class AppBottomNavBar extends StatelessWidget {
               child: Container(
                 height: 70,
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.2),
+                  color: Colors.black.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(25),
                 ),
               ),
@@ -52,19 +52,23 @@ class AppBottomNavBar extends StatelessWidget {
     final bool selected = currentIndex == index;
     return GestureDetector(
       onTap: () => onTap(index),
-      child: Container(
-        width: 44,
-        height: 44,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        width: 50,
+        height: 50,
         decoration: BoxDecoration(
-          color: selected ? _selectedColor.withOpacity(0.18) : Colors.transparent,
-          shape: BoxShape.circle,
+          color: selected ? _selectedColor.withValues(alpha: 0.25) : Colors.transparent,
+          borderRadius: BorderRadius.circular(16),
         ),
         alignment: Alignment.center,
         child: SvgPicture.asset(
           asset,
           width: 26,
           height: 26,
-          colorFilter: ColorFilter.mode(selected ? _selectedColor : Colors.white, BlendMode.srcIn),
+          colorFilter: ColorFilter.mode(
+            selected ? _selectedColor : Colors.white.withValues(alpha: 0.5), 
+            BlendMode.srcIn,
+          ),
         ),
       ),
     );

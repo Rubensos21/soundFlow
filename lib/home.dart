@@ -22,7 +22,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  int _selectedIndex = 2;
+  late int _selectedIndex;
 
   String _userName = '';
   List<dynamic> _topArtists = [];
