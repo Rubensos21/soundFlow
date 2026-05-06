@@ -56,9 +56,7 @@ class ApiClient {
 
 
   String getAuthUrlForBrowser(String platform) {
-    if (!kIsWeb && Platform.isAndroid) {
-      return 'http://10.0.2.2:8000/auth/$platform';
-    }
+    // Esto fuerza a usar la IP de arriba
     return '$_baseUrl/auth/$platform';
   }
 

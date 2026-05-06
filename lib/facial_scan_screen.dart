@@ -3,7 +3,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'services/api_client.dart';
-import 'playlist_result.dart';
+import 'generated_playlist_detail.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MODELO DE EMOCIÓN
@@ -555,12 +555,10 @@ class _FacialScanScreenState extends State<FacialScanScreen>
         ),
         onPressed: () {
           if (_playlistId != null) {
+            // Usamos la nueva pantalla que lee de tu base de datos SQLite
             Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => PlaylistResultScreen(
-                title: _playlistName ?? 'Mi Playlist',
-                subtitleUser: 'Generada por tu emoción',
-                mood: _rawEmotion ?? 'neutral',
-                playlistId: _playlistId!,
+              builder: (_) => GeneratedPlaylistDetailScreen(
+                playlistId: int.parse(_playlistId!), // Lo convertimos a int
               ),
             ));
           }

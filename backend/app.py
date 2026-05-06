@@ -7,6 +7,13 @@ from loguru import logger
 import httpx
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+import io
+import numpy as np
+from PIL import Image
+
+# Importación para el modelo de IA
+import os
+from tensorflow.keras.models import load_model
 
 from .config import settings
 from .db import Base, engine, get_db
@@ -29,6 +36,25 @@ Base.metadata.create_all(bind=engine)
 emotion_detector = EmotionDetector()
 prompt_processor = PromptProcessor()
 
+# ============================================================================
+# CARGA DEL MODELO CNN (CARGA GLOBAL)
+# ============================================================================
+try:
+    logger.info("Cargando modelo CNN de emociones...")
+    
+    # 1. Obtenemos la ruta de la carpeta donde está app.py (la carpeta 'backend')
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    
+    # 2. Entramos a la carpeta 'models' y apuntamos al archivo
+    MODEL_PATH = os.path.join(BASE_DIR, "models", "emotion_model.h5") 
+    
+    # 3. Cargamos el modelo
+    emotion_model = load_model(MODEL_PATH) 
+    
+    emotion_labels = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral']
+except Exception as e:
+    logger.error(f"Error cargando el modelo CNN: {e}")
+    emotion_model = None
 
 PLATFORMS = {"spotify"}
 
@@ -608,60 +634,196 @@ async def auth_callback(platform: str, code: str = None, state: str = None, erro
     
     return HTMLResponse(content=html_content)
 
+# ============================================================================
+# ENDPOINT DE GENERACIÓN DE PLAYLISTS POR ESCANEO FACIAL
+# ============================================================================
 
 @app.post("/api/generate-playlist/facial")
 async def generate_playlist_facial(
     image: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    """
-    Genera una playlist desde las liked songs del usuario
-    filtradas por la emoción detectada en la foto.
-    """
+    import json
+    import re
+    from collections import Counter
+    from urllib.parse import quote
+    
     user = get_current_user(None, db)
+    
+    if emotion_model is None:
+        raise HTTPException(status_code=500, detail="El modelo de IA (Keras) no está disponible en el servidor")
 
-    # 1. Detectar emoción (stub → producción: DeepFace)
-    content = await image.read()
-    raw_emotion, _ = emotion_detector.detect_emotion_from_image(content)
-    mood = EMOTION_ALIAS.get(raw_emotion, "neutral")
+    # --- 1. PROCESAR LA IMAGEN Y PASARLA A LA CNN ---
+    try:
+        contents = await image.read()
+        # Convertimos a escala de grises. Si entrenaste tu modelo con imágenes a color usa 'RGB'
+        img = Image.open(io.BytesIO(contents)).convert('L') 
+        
+        # Redimensionar al tamaño exigido por tu CNN (Ajusta este 48, 48 si usaste otro)
+        img = img.resize((48, 48))
+        img_array = np.array(img)
+        
+        # Normalización
+        img_array = img_array.astype('float32') / 255.0
+        
+        # Ajustar dimensiones (1, 48, 48, 1)
+        img_array = np.expand_dims(img_array, axis=0)
+        img_array = np.expand_dims(img_array, axis=-1)
+        
+    except Exception as e:
+        logger.error(f"Error procesando la imagen: {e}")
+        raise HTTPException(status_code=400, detail="Imagen inválida o corrupta")
 
-    # 2. Obtener token de Spotify
+    # --- 2. PREDICCIÓN DE EMOCIÓN CON TU MODELO ---
+    try:
+        predictions = emotion_model.predict(img_array)
+        max_index = np.argmax(predictions[0])
+        detected_emotion = emotion_labels[max_index]
+        logger.info(f"CNN Detectó la emoción: {detected_emotion}")
+    except Exception as e:
+        logger.error(f"Error en la predicción de la CNN: {e}")
+        raise HTTPException(status_code=500, detail="Error evaluando la emoción de la foto")
+
+    # Adaptar la emoción de tu CNN a la nomenclatura de Spotify/Prompting de tu sistema
+    mood_map = {
+        'happy': 'happy',
+        'sad': 'sad',
+        'angry': 'angry',
+        'fear': 'calm',       # Si tiene miedo, le damos calma
+        'disgust': 'angry',   # Lo agrupamos
+        'surprise': 'excited',
+        'neutral': 'neutral'
+    }
+    mood = mood_map.get(detected_emotion, "neutral")
+
+    # --- 3. EXTRACCIÓN DE GUSTOS DE SPOTIFY ---
+    openrouter_key = getattr(settings, 'openrouter_api_key', None)
+    if not openrouter_key:
+        raise HTTPException(status_code=500, detail="OPENROUTER_API_KEY no está configurada")
+
     spotify_account = db.query(UserStreamingAccount).filter_by(
         user_id=user.id, platform="spotify"
     ).first()
+    
+    if not spotify_account or not spotify_account.access_token:
+        raise HTTPException(status_code=400, detail="Conecta tu cuenta de Spotify primero")
 
-    tracks: List[Dict] = []
-    total_analyzed = 0
-    source = "internal"
+    token = await _get_spotify_token(db, user)
+    
+    favorite_artists_str = "Varios"
+    favorite_genres_str = "Variados"
+    try:
+        top_artists_data = await _spotify_api_request("/me/top/artists?limit=50&time_range=medium_term", token)
+        artists_items = top_artists_data.get("items", [])
+        
+        if artists_items:
+            artists_names = [a["name"] for a in artists_items]
+            favorite_artists_str = ", ".join(artists_names)
+            
+            all_genres = []
+            for a in artists_items:
+                all_genres.extend(a.get("genres", []))
+            
+            top_genres = [g for g, c in Counter(all_genres).most_common(15)]
+            if top_genres:
+                favorite_genres_str = ", ".join(top_genres)
+    except Exception as e:
+        logger.warning(f"No se pudieron obtener los artistas top: {e}")
 
-    if spotify_account and spotify_account.access_token:
+    # --- 4. SOLICITUD A LLAMA 3.3 (HÍBRIDO) ---
+    system_prompt = (
+        "Eres un curador musical experto. Al usuario se le escaneó la cara y el modelo CNN "
+        f"detectó que su emoción actual es: '{detected_emotion}'.\n"
+        "PERFIL DEL USUARIO:\n"
+        f"- Artistas favoritos: {favorite_artists_str}.\n"
+        f"- Géneros que suele escuchar: {favorite_genres_str}.\n\n"
+        "INSTRUCCIONES ESTRICTAS:\n"
+        "1. Genera EXACTAMENTE 40 canciones reales para acompañar esta emoción.\n"
+        f"2. PRIORIDAD MÁXIMA: Si la emoción es '{detected_emotion}', la vibra DEBE combinar. "
+        "NO rompas la atmósfera. Mezcla canciones de sus artistas favoritos que cumplan con esta emoción "
+        "o temas clásicos del mismo género.\n"
+        "3. Devuelve ÚNICAMENTE un arreglo JSON puro con este formato:\n"
+        '[{"title": "Nombre de la cancion", "artist": "Nombre del artista"}]\n'
+    )
+    
+    # Prompt interno (invisible para el usuario) para empujar a la IA
+    internal_prompt = f"La foto muestra que me siento: {detected_emotion}. Crea la playlist."
+
+    async with httpx.AsyncClient(timeout=90.0) as client:
         try:
-            token = await _get_spotify_token(db, user)
-            rec = MoodRecommender(token)
-            tracks, total_analyzed = await rec.generate_playlist(mood, playlist_size=25)
-            source = "spotify_liked"
-            logger.info(f"Facial ({mood}): {len(tracks)} canciones de {total_analyzed} liked songs")
+            res = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {openrouter_key}", 
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "minimax/minimax-m2.5:free", 
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": internal_prompt}
+                    ]
+                }
+            )
+            
+            if res.status_code != 200:
+                raise HTTPException(status_code=500, detail="Error en la API de IA")
+                
+            response_data = res.json()
+            content = response_data["choices"][0]["message"]["content"]
+            
+            match = re.search(r'\[.*\]', content, re.DOTALL)
+            if not match:
+                raise HTTPException(status_code=500, detail="La IA no formateó bien el JSON.")
+                
+            clean_content = match.group(0)
+            recommended_songs = json.loads(clean_content)
+            
         except Exception as e:
-            logger.error(f"MoodRecommender falló en facial: {e}")
-            tracks = HybridRecommender(user.id)._fake_tracks(mood)
-    else:
-        tracks = HybridRecommender(user.id)._fake_tracks(mood)
-        logger.warning("Spotify no conectado — usando tracks de respaldo")
+            logger.error(f"Error generando con IA: {e}")
+            raise HTTPException(status_code=500, detail="Error de la IA al generar canciones")
 
-    # 3. Nombre de playlist
+    # --- 5. BÚSQUEDA EN SPOTIFY ---
+    playlist_tracks = []
+    for song in recommended_songs:
+        if len(playlist_tracks) >= 40:
+            break
+        try:
+            title = song.get("title", "")
+            artist = song.get("artist", "")
+            
+            query = quote(f"track:{title} artist:{artist}")
+            search_data = await _spotify_api_request(f"/search?q={query}&type=track&limit=1", token)
+            
+            items = search_data.get("tracks", {}).get("items", [])
+            if items:
+                track_data = items[0]
+                if not any(t["spotify_id"] == track_data.get("id") for t in playlist_tracks):
+                    playlist_tracks.append({
+                        "spotify_id": track_data.get("id"),
+                        "title": track_data.get("name"),
+                        "artist": ", ".join(a.get("name", "") for a in track_data.get("artists", [])),
+                        "album": track_data.get("album", {}).get("name"),
+                        "image_url": track_data.get("album", {}).get("images", [{}])[0].get("url") if track_data.get("album", {}).get("images") else None,
+                        "uri": track_data.get("uri"),
+                        "external_urls": track_data.get("external_urls", {})
+                    })
+        except Exception as e:
+            continue
+
+    # --- 6. GUARDAR Y RETORNAR ---
     import random as _rand
     names = MOOD_PLAYLIST_NAMES.get(mood, MOOD_PLAYLIST_NAMES["neutral"])
     playlist_name = _rand.choice(names)
 
-    # 4. Guardar en BD
     ai_playlist = AIGeneratedPlaylist(
         user_id=user.id,
         playlist_name=playlist_name,
         generation_method="facial",
         emotion_detected=mood,
-        prompt_used=f"Escaneo facial → {mood}",
-        tracks=tracks,
-        platform=source,
+        prompt_used=f"CNN Scan ({detected_emotion})",
+        tracks=playlist_tracks,
+        platform="spotify_ai_hybrid",
     )
     db.add(ai_playlist)
     db.commit()
@@ -671,10 +833,9 @@ async def generate_playlist_facial(
         "success": True,
         "playlist_id": ai_playlist.id,
         "playlist_name": playlist_name,
-        "emotion_detected": mood,
-        "tracks_count": len(tracks),
-        "total_liked_analyzed": total_analyzed,
-        "playlist": tracks,
+        "emotion_detected": detected_emotion, # Enviamos la emoción pura de Keras a Flutter
+        "tracks_count": len(playlist_tracks),
+        "playlist": playlist_tracks,
     }
 
 
@@ -761,7 +922,7 @@ async def generate_playlist_prompt(
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": "minimax/minimax-m2.5:free", 
+                    "model": "meta-llama/llama-3.3-70b-instruct", 
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
@@ -892,56 +1053,30 @@ def _generate_playlist_name(prompt: str, emotion: str, genres: List[str], activi
 
 @app.get("/api/playlists/generated")
 def get_generated_playlists(db: Session = Depends(get_db)):
-    """Obtener todas las playlists generadas por IA del usuario"""
+    # 1. Obtén el usuario actual
     user = get_current_user(None, db)
-    playlists = db.query(AIGeneratedPlaylist).filter_by(user_id=user.id).order_by(
-        AIGeneratedPlaylist.created_at.desc()
-    ).all()
     
-    return {
-        "success": True,
-        "count": len(playlists),
-        "playlists": [
-            {
-                "id": p.id,
-                "name": p.playlist_name,
-                "generation_method": p.generation_method,
-                "emotion": p.emotion_detected,
-                "prompt": p.prompt_used,
-                "tracks_count": len(p.tracks) if p.tracks else 0,
-                "platform": p.platform,
-                "created_at": p.created_at.isoformat() if p.created_at else None
-            }
-            for p in playlists
-        ]
-    }
-
-
-@app.get("/api/playlists/generated/{playlist_id}")
-def get_generated_playlist_detail(playlist_id: int, db: Session = Depends(get_db)):
-    """Obtener detalles completos de una playlist generada"""
-    user = get_current_user(None, db)
-    playlist = db.query(AIGeneratedPlaylist).filter_by(
-        id=playlist_id,
-        user_id=user.id
-    ).first()
+    # 2. Busca las playlists generadas por este usuario
+    playlists = db.query(AIGeneratedPlaylist).filter_by(user_id=user.id).all()
     
-    if not playlist:
-        raise HTTPException(status_code=404, detail="Playlist no encontrada")
-    
-    return {
-        "success": True,
-        "playlist": {
-            "id": playlist.id,
-            "name": playlist.playlist_name,
-            "generation_method": playlist.generation_method,
-            "emotion": playlist.emotion_detected,
-            "prompt": playlist.prompt_used,
-            "tracks": playlist.tracks,
-            "platform": playlist.platform,
-            "created_at": playlist.created_at.isoformat() if playlist.created_at else None
-        }
-    }
+    # 3. Formatea la respuesta, extrayendo la imagen de la primera pista
+    result = []
+    for p in playlists:
+        # Busca la imagen en la primera canción de la playlist
+        cover_image = None
+        if p.tracks and isinstance(p.tracks, list) and len(p.tracks) > 0:
+             # Asegúrate de usar la clave correcta donde guardas la URL de la imagen en tu base de datos
+             cover_image = p.tracks[0].get('image_url')
+             
+        result.append({
+            "id": p.id,
+            "name": p.playlist_name,
+            "emotion": p.emotion_detected,
+            "tracks_count": len(p.tracks) if p.tracks else 0,
+            "image_url": cover_image # Añade la URL de la imagen aquí
+        })
+        
+    return {"playlists": result}
 
 
 @app.get("/api/playlists/generated/{playlist_id}")
@@ -978,6 +1113,7 @@ def get_generated_playlist_detail(playlist_id: int, db: Session = Depends(get_db
         }
     }
 
+
 @app.delete("/api/playlists/generated/{playlist_id}")
 def delete_generated_playlist(playlist_id: int, db: Session = Depends(get_db)):
     """Eliminar una playlist generada con IA"""
@@ -1000,13 +1136,6 @@ def delete_generated_playlist(playlist_id: int, db: Session = Depends(get_db)):
     db.commit()
     
     return {"success": True, "message": "Playlist eliminada correctamente"}
-
-# ============================================================================
-# ENDPOINTS DE DEEZER Y APPLE MUSIC (deshabilitados para versiones futuras)
-# ============================================================================
-# Estos endpoints han sido comentados porque actualmente solo se usa Spotify.
-# Se rehabilitarán en versiones futuras de la app.
-
 
 # ============================================================================
 # ENDPOINTS DE PERFIL Y COMUNIDAD
